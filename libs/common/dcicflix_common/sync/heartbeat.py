@@ -60,6 +60,19 @@ class HealthState:
             result[name] = status if now - at <= max_age else health.ERROR
         return result
 
+    def explain(self, name: str, max_age: float = MAX_AGE) -> str:
+        """Por qué una dependencia reportada está como está, para los logs."""
+        with self._lock:
+            report = self._reports.get(name)
+        if report is None:
+            return "sin reporte todavía"
+        status, at = report
+        age = self._clock() - at
+        if age > max_age:
+            # El dueño dejó de reportar: está colgado o no atiende su conexión.
+            return f"sin reporte hace {age:.0f} s"
+        return f"reportado {status!r}"
+
 
 class Heartbeat:
     """Escribe el estado del servicio en un archivo, cada `interval` segundos.
@@ -139,5 +152,5 @@ class Heartbeat:
             # El primer latido sale antes de que el hilo principal termine de conectar.
             log.info("latido: arrancando, esperando %s", ", ".join(failing))
             return
-        details = "; ".join(f"{name}: {errors.get(name, 'sin reporte reciente')}" for name in failing)
+        details = "; ".join(f"{name}: {errors.get(name) or self.state.explain(name)}" for name in failing)
         log.warning("latido: error (%s)", details[:500])

@@ -89,3 +89,13 @@ def test_healthcheck_estado_error(tmp_path):
 def test_healthcheck_nota_ilegible(tmp_path):
     (tmp_path / "h.json").write_text("{a medio escribir")
     assert "ilegible" in healthcheck.problem(tmp_path / "h.json")
+
+
+def test_explain_distingue_error_reportado_de_reporte_vencido():
+    clock = FakeClock()
+    state = HealthState(clock)
+    assert state.explain("rabbitmq") == "sin reporte todavía"
+    state.report("rabbitmq", "error")
+    assert state.explain("rabbitmq") == "reportado 'error'"
+    clock.now += 45
+    assert state.explain("rabbitmq") == "sin reporte hace 45 s"
