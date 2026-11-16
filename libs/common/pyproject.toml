@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dcicflix-common"
+version = "0.1.0"
+description = "Helper compartido de los servicios Python de DCIC-Flix"
+requires-python = ">=3.12"
+# El núcleo (config, logging, topology) no tiene dependencias: los tests de
+# arquitectura lo importan sin instalar nada.
+dependencies = []
+
+[project.optional-dependencies]
+# Servicios con I/O bloqueante: ingest-consumer, cleaning-agent, topology-init.
+sync = ["pika==1.4.4", "pymongo==4.20.0"]
+# Servicios asyncio: backend, recommender.
+async = ["aio-pika==10.2.3", "pymongo==4.20.0"]
+
+[tool.setuptools.packages.find]
+include = ["dcicflix_common*"]
