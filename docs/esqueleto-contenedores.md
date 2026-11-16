@@ -1,6 +1,6 @@
 # Esqueleto de contenedores
 
-> **Estado: plan final, aprobado el 2026-11-16.** Próximo paso: implementar la fase F1. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
+> **Estado: plan final, aprobado el 2026-11-16.** F1 implementada. Próximo paso: F2. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
 
 ## Objetivo
 
@@ -63,8 +63,8 @@ Levantar con `docker compose up --build` la arquitectura de contenedores descrit
 | `ingest-consumer` | sync | `internal-net` | `mongodb`, `rabbitmq` | — (latido) | Mongo, Rabbit, topología | — |
 | `cleaning-agent` | sync | `internal-net`, `egress-net` | `mongodb`, `rabbitmq` | — (latido) | Mongo, Rabbit, topología | — |
 | `topology-init` | sync, una vez | `internal-net` | `rabbitmq` | — | termina con código 0 | — |
-| `mongodb` | `mongo:8.0` | `internal-net` | — | 27017 | `mongosh` ping | — |
-| `rabbitmq` | `rabbitmq:4.1` | `internal-net` | — | 5672 | `rabbitmq-diagnostics -q ping` | — |
+| `mongodb` | `mongo:8.0` | `internal-net` | — | 27017 | `mongosh --host mongodb` ping (por la red, no `localhost`) | — |
+| `rabbitmq` | `rabbitmq:4.1` | `internal-net` | — | 5672 | conexión TCP a 5672 | — |
 
 - **Todos los servicios declaran `networks:` explícitamente.** Si no, Docker los conecta a una red `default` fuera del diseño.
 - `internal-net` lleva `internal: true`.
@@ -130,12 +130,15 @@ COPY services/backend/app ./app
 - Volúmenes: `mongo-data:/data/db` y `./dataset:/docker-entrypoint-initdb.d`. Va **sin `:ro`**, porque el script descomprime ahí.
 - Durante la carga, el servidor temporal corre sin autenticación y solo en `127.0.0.1` (verificado en el entrypoint oficial), así que `mongoimport` sin credenciales funciona.
 - La carga corre **solo con el volumen vacío**. Para recargar, o después de una carga fallida: `docker compose down -v`.
+- **El healthcheck se conecta con `--host mongodb`, no a `localhost`.** Medido en F1: durante la carga, el ping a `localhost` ya responde (a los 17 s, cuando la carga terminó a los 37 s); el ping por la red solo responde con el servidor definitivo (45 s). Así, *healthy* significa dataset cargado.
+- Resultado de la carga: 19.842 películas y 61.488 reseñas, con los índices de `mongo-init.sh`.
 
 **`rabbitmq`**
 - Usuario propio (`RABBITMQ_DEFAULT_USER` y `RABBITMQ_DEFAULT_PASS`, desde `RABBITMQ_USER` y `RABBITMQ_PASSWORD`), porque `guest` solo se conecta desde dentro del contenedor.
 - `hostname: rabbitmq`, fijo para que persistan los datos.
 - Volumen `rabbitmq-data:/var/lib/rabbitmq`.
 - Sin panel web. Las colas se ven con `docker compose exec rabbitmq rabbitmqctl list_queues`.
+- **El healthcheck es una conexión TCP al 5672** (`bash -c 'exec 3<>/dev/tcp/127.0.0.1/5672'`), la prueba que recomienda la [documentación de RabbitMQ](https://www.rabbitmq.com/docs/monitoring#health-checks). `rabbitmq-diagnostics ping` solo verifica que corra Erlang: medido en F1, respondía a los 7 s y el puerto AMQP recién aceptaba conexiones a los 27 s. Además, cada comando `rabbitmq-diagnostics` tiene un costo de CPU.
 
 ### Health
 
@@ -166,7 +169,7 @@ frontend: sin depends_on
 
 | Servicio | `restart` | `interval` | `retries` | `start_period` |
 | :-- | :-- | :-- | :-- | :-- |
-| `mongodb` | `unless-stopped` | 5 s | 10 | 60 s (importa unos 80.000 documentos) |
+| `mongodb` | `unless-stopped` | 5 s | 10 | 120 s (la carga tardó ~40 s y el *healthy* llegó a los ~57 s; margen para máquinas lentas) |
 | `rabbitmq` | `unless-stopped` | 5 s | 10 | 20 s |
 | `topology-init` | `"no"` | — | — | — |
 | `backend`, `recommender` | `unless-stopped` | 10 s | 3 | 15 s |
@@ -196,6 +199,9 @@ frontend: sin depends_on
 | `dynamic` | Sí | Todos *healthy* y `topology-init` en `Exited (0)`; `localhost:8080/api/health` → 200; matriz de alcance y aislamiento; topología del broker igual a `topology.py` |
 | `slow` | Sí | Persistencia: cantidad de documentos igual tras `down` + `up` |
 
+- Lo esperado vive en `tests/architecture/spec.py` (redes, redes internas, servicios con puerto, servicios de una sola vez, política de reinicio); los tests solo comparan.
+- Uso: `python -m venv .venv`, `pip install -r tests/requirements.txt`, `docker compose up -d --wait` y `pytest` (o `pytest -m static`).
+- `compose config` omite las redes que ningún servicio usa: el test de redes compara por inclusión, y la existencia de cada conexión la prueba la matriz.
 - **La tabla de comunicación es datos del test:** una matriz `REACHABILITY` (qué resuelve cada servicio, qué no, y si sale a internet) genera los tests de alcance y aislamiento. Cambiar la arquitectura obliga a cambiar esa tabla.
 - La topología se compara importando `dcicflix_common.topology` contra `rabbitmqctl list_queues` y `list_exchanges`.
 - Los tests de salida a internet se saltean con aviso si la máquina no tiene conexión.
