@@ -20,3 +20,27 @@ ONE_SHOT_SERVICES = {"topology-init"}
 
 # Política de reinicio de los servicios de larga vida.
 LONG_LIVED_RESTART = "unless-stopped"
+
+# Matriz de alcance y aislamiento: la tabla de comunicación del README, como datos.
+# Por cada servicio propio de larga vida:
+#   resolves:     nombres que tiene que resolver (sus dependencias)
+#   not_resolves: nombres que no tiene que resolver (aislamiento entre redes)
+#   internet:     si sale a internet
+# Un nombre de un servicio que todavía no existe en el compose se saltea con aviso.
+REACHABILITY = {
+    "ingest-consumer": {
+        "resolves": {"mongodb", "rabbitmq"},
+        "not_resolves": {"frontend"},
+        "internet": False,
+    },
+    "cleaning-agent": {
+        "resolves": {"mongodb", "rabbitmq"},
+        "not_resolves": {"frontend"},
+        "internet": True,  # egress-net: API del LLM
+    },
+}
+
+# Destinos para probar la salida a internet: por IP (ruta) y por nombre (DNS + ruta).
+# Con una red solo `internal`, Docker ni siquiera resuelve nombres externos: probar
+# solo por nombre no distinguiría "sin DNS" de "sin ruta".
+INTERNET_PROBES = (("1.1.1.1", 443), ("one.one.one.one", 443))

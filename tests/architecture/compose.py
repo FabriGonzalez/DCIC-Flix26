@@ -47,3 +47,8 @@ def containers() -> dict[str, dict]:
     else:
         rows = [json.loads(line) for line in out.splitlines()]
     return {row["Service"]: row for row in rows}
+
+
+def exec_python(service: str, code: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """Ejecuta `python -c <code> <args>` dentro del contenedor del servicio."""
+    return run("exec", "-T", service, "python", "-c", code, *args, check=False)

@@ -71,3 +71,12 @@ def test_servicios_de_larga_vida_con_healthcheck(service):
         pytest.skip("servicio de una sola vez")
     healthcheck = compose.services()[service].get("healthcheck", {})
     assert healthcheck.get("test") and not healthcheck.get("disable"), f"{service} no tiene healthcheck"
+
+
+def test_servicios_propios_en_la_matriz_de_alcance():
+    # Un servicio propio nuevo obliga a escribir su fila en spec.REACHABILITY.
+    own = {name for name, svc in compose.services().items() if "build" in svc} - spec.ONE_SHOT_SERVICES
+    missing = own - set(spec.REACHABILITY)
+    assert not missing, f"faltan en spec.REACHABILITY: {missing}"
+    unknown = set(spec.REACHABILITY) - set(compose.services())
+    assert not unknown, f"spec.REACHABILITY nombra servicios que no existen: {unknown}"
