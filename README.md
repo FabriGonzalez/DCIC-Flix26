@@ -4,7 +4,7 @@ Plataforma web de catálogo cinematográfico con microservicios, agente de limpi
 
 Proyecto final de Tópicos Avanzados de Desarrollo Web (DCIC, UNS), edición 2026.
 
-> **Estado del documento:** describe el diseño de arquitectura acordado por el grupo. La implementación todavía no comenzó; las secciones que dependen de ella están listadas en [Pendiente](#pendiente).
+> **Estado del documento:** describe el diseño de arquitectura acordado por el grupo. La implementación está en curso: el esqueleto de contenedores sigue el plan de [docs/esqueleto-contenedores.md](docs/esqueleto-contenedores.md). Las secciones que dependen de la funcionalidad están listadas en [Pendiente](#pendiente).
 
 ## Ejecución
 
@@ -14,6 +14,22 @@ docker compose up --build
 
 No requiere pasos manuales: la carga del dataset, la declaración de colas, la limpieza y el entrenamiento inicial se coordinan entre los contenedores.
 
+- **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
+- **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
+- La primera carga del dataset tarda alrededor de un minuto. Para recargarlo desde cero: `docker compose down -v`.
+
+### Verificación de la arquitectura
+
+```bash
+python -m venv .venv                        # Python 3.12
+.venv/Scripts/activate                      # en Linux o macOS: source .venv/bin/activate
+pip install -r tests/requirements.txt
+pytest -m static                            # no necesita nada levantado
+docker compose up -d --wait && pytest       # todo, con el sistema levantado
+```
+
+La arquitectura esperada (redes, puertos, servicios) está como datos en [tests/architecture/spec.py](tests/architecture/spec.py), y la topología de RabbitMQ en [topology.py](libs/common/dcicflix_common/topology.py).
+
 ## Servicios
 
 | Servicio | Responsabilidad |
@@ -22,9 +38,12 @@ No requiere pasos manuales: la carga del dataset, la declaración de colas, la l
 | `backend` | Gateway/API: lecturas del catálogo, publicación de interacciones, estado del sistema, auditoría y proxy hacia `recommender`. |
 | `mongodb` | Base de datos (imagen oficial). Carga el dataset inicial desde `dataset/`. |
 | `rabbitmq` | Message broker (imagen oficial). |
+| `topology-init` | Declara exchanges y colas de RabbitMQ al arrancar y termina. |
 | `ingest-consumer` | Worker sin API HTTP: consume votos y reseñas de la cola y los persiste en MongoDB. |
 | `cleaning-agent` | Diagnostica y sanea el dataset, registra la auditoría y emite la señal de datos limpios. |
 | `recommender` | Entrena o indexa al recibir la señal y sirve recomendaciones desde estructuras en memoria. |
+
+Tecnologías: los servicios propios del lado servidor están en Python 3.12 (FastAPI para `backend` y `recommender`) y comparten un helper en [libs/common](libs/common). El `frontend` usa React + TypeScript (Vite), servido por nginx.
 
 El `backend` concentra varias responsabilidades de lectura a propósito: actúa como único punto de entrada para el `frontend`, lo que simplifica el aislamiento de redes.
 
@@ -88,7 +107,9 @@ Criterio para elegir el mecanismo:
 | `interactions` | Cola durable | `backend` | `ingest-consumer` | Votos con reseña. Mensajes persistentes y confirmación manual. |
 | `data.cleaned` | Evento | `cleaning-agent` | `recommender` | Dispara el entrenamiento o indexación inicial. |
 
-Cada servicio declara al iniciar las colas que usa, de modo que el orden de arranque no importa y no hay configuración manual del broker.
+Los mensajes de `interactions` que no se pueden guardar se derivan por dead-letter a la cola `interactions.errors`. `data.cleaned` es un exchange fanout: cada suscriptor tiene su propia cola (hoy, `recommender.data-cleaned`).
+
+`topology-init` declara toda la topología, definida en un único archivo ([topology.py](libs/common/dcicflix_common/topology.py)), y los servicios la verifican al arrancar, sin declararla. Así hay un solo responsable y no hay configuración manual del broker.
 
 ### Estado del sistema
 
@@ -115,7 +136,7 @@ El `frontend` consulta `GET /status` cada pocos segundos mientras el estado no s
 
 ### Arranque en frío
 
-1. `mongodb` carga el dataset y `rabbitmq` levanta. Los demás servicios esperan sus healthchecks y reintentan la conexión.
+1. `mongodb` carga el dataset y `rabbitmq` levanta. `topology-init` declara las colas y termina. Los demás servicios esperan esos pasos y reintentan la conexión.
 2. `cleaning-agent` lee la marca de limpieza, no la encuentra y comienza a limpiar, registrando la auditoría.
 3. `recommender` se suscribe a `data.cleaned`, lee la marca, ve que no es `done` y espera.
 4. El `frontend` recibe `cleaning`: muestra el catálogo con el aviso, sin recomendaciones ni votos.
@@ -158,7 +179,7 @@ Decisiones abiertas:
 - **Algoritmo del recomendador**, y si el modelo se guarda en un volumen para que el segundo arranque tarde pocos segundos.
 - **Lectura de datos sucios:** cómo tolera el `backend` los formatos corruptos mientras dura la limpieza.
 - **Caída de `cleaning-agent` a mitad de la limpieza:** el proceso debe poder repetirse o retomarse sin duplicar la auditoría.
-- **Tecnologías** de cada servicio y del `frontend`.
+- **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
 
 Secciones a completar con la implementación:
 

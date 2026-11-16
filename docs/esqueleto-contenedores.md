@@ -1,6 +1,6 @@
 # Esqueleto de contenedores
 
-> **Estado: plan final, aprobado el 2026-11-16.** F1 implementada. Próximo paso: F2. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
+> **Estado: plan final, aprobado el 2026-11-16.** F1 y F2 implementadas. Próximo paso: F3. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
 
 ## Objetivo
 
@@ -85,7 +85,8 @@ DCIC-Flix26/
 ├── dataset/               mongo-init.sh, movies.json.gz, reviews.json.gz (13 MB, va en Git)
 ├── libs/
 │   └── common/
-│       ├── pyproject.toml          extras [sync] (pika, pymongo) y [async] (aio-pika, pymongo)
+│       ├── pyproject.toml          extras [sync] (pika, pymongo) y [async] (aio-pika, pymongo), versiones fijas
+│       ├── tests/                  tests unitarios: config y coherencia de topology.py
 │       └── dcicflix_common/
 │           ├── config.py           variables de entorno; falla al arrancar si falta una obligatoria
 │           ├── logging.py
@@ -106,6 +107,7 @@ DCIC-Flix26/
 │   ├── ingest-consumer/
 │   ├── cleaning-agent/
 │   └── topology-init/     Dockerfile, main.py
+├── pytest.ini             pythonpath = libs/common tests/architecture (el núcleo del helper no tiene dependencias)
 └── tests/
     ├── requirements.txt   pytest (y el helper, para importar topology.py)
     └── architecture/      tests static, dynamic y slow; matriz REACHABILITY
@@ -179,6 +181,12 @@ frontend: sin depends_on
 - `topology-init` no se reinicia: reintenta la conexión por sí mismo, y si falla igual es un error real (por ejemplo `PRECONDITION_FAILED`), que tiene que verse.
 - `topology-init` en `Exited (0)` es lo esperado. Hay que documentarlo en el README.
 - **Política ante fallas (D14):** Compose reinicia cuando el proceso termina, no cuando falla el healthcheck. Por eso el helper distingue errores: ante uno de conexión, reintenta; ante uno irrecuperable, termina con código 1 para que `unless-stopped` actúe.
+  - Recuperables (`sync/rabbit.py`): `AMQPConnectionError` y **`OSError`**. Con el contenedor de `rabbitmq` detenido, su nombre deja de resolver y pika lanza `socket.gaierror`, que no es un error AMQP (encontrado en F2). Espera exponencial de 1 a 10 s.
+  - Irrecuperables: credenciales rechazadas (`ProbableAuthenticationError` y afines, subclases de `AMQPConnectionError` que se excluyen del reintento), canal cerrado por el broker (`PRECONDITION_FAILED`) y topología faltante.
+  - Comprobado en F2 contra el broker real: idempotencia, variable faltante, contraseña incorrecta (falla sin reintentar), cola con otros argumentos (406), broker caído que vuelve (reintenta y termina bien) y broker caído 60 s (código 1).
+- **`up --wait` y `topology-init`:** `--wait` da error si un contenedor termina mientras espera, aunque sea con código 0, salvo que otro servicio dependa de él con `service_completed_successfully` (comprobado). Por eso en F2, sin dependientes, `--wait` puede fallar según los tiempos; desde F3 los workers dependen de `topology-init` y deja de pasar.
+- `verify_topology` comprueba exchanges y colas con declaraciones pasivas. AMQP no permite consultar bindings: los comprueba el test de arquitectura con `rabbitmqctl list_bindings`.
+- RabbitMQ 4.1 agrega `x-queue-type: classic` a cada cola: el test exige los argumentos de `topology.py` sin pedir que sean los únicos.
 
 ### Configuración (D15)
 
@@ -214,8 +222,8 @@ Cada fase es un commit (o pocos), termina con `docker compose up --build` sano y
 | Fase | Qué se construye | Se verifica con |
 | :-- | :-- | :-- |
 | **F1. Base e infraestructura** | `.gitattributes` (antes de commitear `dataset/`), `.gitignore`, `.dockerignore`, `.env.example`; commit de `dataset/` y `docs/`; `docker-compose.yml` con `mongodb`, `rabbitmq`, las 3 redes y los volúmenes; esqueleto de `tests/architecture/` con los tests `static` | Mongo y Rabbit *healthy*; `movies` y `reviews` cargadas; `pytest -m static` en verde |
-| **F2. Helper común y topología** | `libs/common`: `config`, `logging`, `health`, `topology`, `sync/`; servicio `topology-init`; cambios en el README | `topology-init` en `Exited (0)`; test de topología |
-| **F3. Workers** | `ingest-consumer` y `cleaning-agent` con latido y la política de D14 | *healthy* por latido; matriz de alcance para ambos; salida a internet solo del `cleaning-agent` |
+| **F2. Helper común y topología** | `libs/common`: `config`, `logging`, `topology`, `sync/rabbit`; servicio `topology-init`; tests unitarios del helper; cambios en el README | `topology-init` en `Exited (0)`; test de topología |
+| **F3. Workers** | `health`, `sync/mongo`, `sync/heartbeat` y `sync/healthcheck` (cada pieza entra en la fase que la ejercita); `ingest-consumer` y `cleaning-agent` con latido y la política de D14 | *healthy* por latido; matriz de alcance para ambos; salida a internet solo del `cleaning-agent` |
 | **F4. Servicios HTTP** | Helper `aio/`; `backend` y `recommender` con `/health` | *healthy*; el `backend` informa al `recommender` en `info`; matriz para ambos |
 | **F5. Frontend** | React + TS (Vite) con una pantalla que muestra `/api/health`; Dockerfile de 2 etapas; `nginx.conf` con el resolver por pedido | `localhost:8080` y `/api/health` → 200; aislamiento del `frontend`; criterios 1 a 5 completos |
 | **F6. Resiliencia y persistencia** | Test `slow` de persistencia; prueba de reconexión (parar y volver a levantar `rabbitmq` y `mongodb`) | Criterio 6; los servicios vuelven a *healthy* sin intervención |
@@ -237,9 +245,9 @@ Por qué este orden:
 - **Sin API key, la app tiene que funcionar:** traducción y chat responden "no disponible", y el `cleaning-agent` saltea lo que requiere el LLM sin caerse.
 - Observación para el `cleaning-agent`: `rating` trae `null`, texto (`"4"`) y valores fuera de rango (`10`, `-1`, `100`, `999`).
 
-### Cambios a hacer en el README (fase F2)
+### Cambios al README (hechos en F2)
 
-- Agregar `topology-init` a la tabla de servicios.
-- Reemplazar "cada servicio declara al iniciar las colas que usa" por "`topology-init` declara la topología; los servicios la verifican".
-- Aclarar que `topology-init` en `Exited (0)` es normal.
-- Agregar cómo correr los tests de arquitectura (`pip install -r tests/requirements.txt` y `pytest -m static` / `-m dynamic`), y que la API key del LLM es opcional y va en `.env`.
+- `topology-init` en la tabla de servicios y en el arranque en frío; `Exited (0)` aclarado como normal.
+- "Cada servicio declara al iniciar las colas que usa" reemplazado por "`topology-init` declara la topología; los servicios la verifican", con la cola de errores y el fanout de `data.cleaned`.
+- Cómo correr los tests de arquitectura, `.env` opcional y API key del LLM opcional.
+- Tecnologías (D2, D3) en la sección de servicios, en lugar de figurar como pendiente; la API key para la evaluación agregada a "Pendiente".
