@@ -1,0 +1,64 @@
+# Esqueleto de contenedores de DCIC-Flix.
+# Diseño y decisiones: docs/esqueleto-contenedores.md
+#
+# Todos los valores tienen un default de desarrollo (D15): `docker compose up --build`
+# funciona sin .env. Para cambiarlos, copiar .env.example a .env.
+
+name: dcicflix
+
+services:
+  mongodb:
+    image: mongo:8.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-dcicflix}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-dcicflix-dev}
+    volumes:
+      - mongo-data:/data/db
+      # Carga el dataset solo con el volumen vacío. Sin :ro: el script descomprime ahí.
+      - ./dataset:/docker-entrypoint-initdb.d
+    networks:
+      - internal-net
+    healthcheck:
+      # --host mongodb (no localhost): durante la carga del dataset el entrypoint levanta
+      # un servidor temporal que solo escucha en 127.0.0.1. Así, healthy = carga terminada.
+      test: ["CMD", "mongosh", "--quiet", "--host", "mongodb", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      # La carga de ~80.000 documentos tardó ~40 s en una máquina de desarrollo.
+      # Margen para máquinas más lentas: no demora el healthy, solo la cuenta de fallas.
+      start_period: 120s
+
+  rabbitmq:
+    image: rabbitmq:4.1
+    hostname: rabbitmq # fijo: el nombre del nodo define dónde guarda sus datos
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-dcicflix}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-dcicflix-dev}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - internal-net
+    healthcheck:
+      # Prueba TCP al puerto AMQP, la recomendada por la documentación de RabbitMQ.
+      # `rabbitmq-diagnostics ping` responde antes de que el broker acepte conexiones.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5672"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+networks:
+  # frontend y backend
+  public-net: {}
+  # Datos y mensajería. Sin salida a internet.
+  internal-net:
+    internal: true
+  # Salida del cleaning-agent hacia la API del LLM.
+  egress-net: {}
+
+volumes:
+  mongo-data:
+  rabbitmq-data:
