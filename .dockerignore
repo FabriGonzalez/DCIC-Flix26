@@ -7,7 +7,7 @@
 dataset/
 
 docs/
-tests/
+**/tests
 
 **/node_modules
 **/dist

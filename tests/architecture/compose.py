@@ -30,6 +30,12 @@ def services() -> dict[str, dict]:
     return config()["services"]
 
 
+def rabbitmqctl(*args: str) -> list[dict]:
+    """Ejecuta `rabbitmqctl <args>` dentro del contenedor y devuelve su salida JSON."""
+    out = run("exec", "-T", "rabbitmq", "rabbitmqctl", "-q", "--formatter", "json", *args).stdout
+    return json.loads(out)
+
+
 def containers() -> dict[str, dict]:
     """Estado de los contenedores del proyecto, incluidos los terminados, por servicio."""
     out = run("ps", "--all", "--format", "json").stdout.strip()

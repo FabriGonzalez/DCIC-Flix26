@@ -6,6 +6,15 @@
 
 name: dcicflix
 
+# Variables que reciben los servicios propios. Cada uno recibe solo las que usa (D15).
+x-rabbit-env: &rabbit-env
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_USER: ${RABBITMQ_USER:-dcicflix}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-dcicflix-dev}
+
+x-log-env: &log-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
 services:
   mongodb:
     image: mongo:8.0
@@ -49,6 +58,20 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+
+  # Declara colas y exchanges de topology.py y termina: Exited (0) es lo esperado (D10).
+  topology-init:
+    build:
+      context: .
+      dockerfile: services/topology-init/Dockerfile
+    restart: "no" # si falla, es un error real que tiene que verse
+    environment:
+      <<: [*rabbit-env, *log-env]
+    networks:
+      - internal-net
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
 networks:
   # frontend y backend

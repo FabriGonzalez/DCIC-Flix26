@@ -1,5 +1,7 @@
 """Verificaciones sobre `docker compose config`. No necesitan nada levantado."""
 
+import re
+
 import pytest
 
 import compose
@@ -8,6 +10,7 @@ import spec
 pytestmark = pytest.mark.static
 
 SERVICES = sorted(compose.services())
+DOCKERFILES = sorted(compose.REPO_ROOT.glob("services/*/Dockerfile"))
 
 
 def test_no_hay_redes_fuera_del_diseno():
@@ -47,6 +50,13 @@ def test_imagenes_con_tag_fijo(service):
     # El tag va después del último "/", para no confundirlo con el puerto de un registry.
     _, _, tag = image.split("/")[-1].partition(":")
     assert tag and tag != "latest", f"{service} usa {image}: fijar un tag de versión"
+
+
+@pytest.mark.parametrize("dockerfile", DOCKERFILES, ids=lambda p: p.parent.name)
+def test_dockerfiles_con_tag_fijo(dockerfile):
+    for image in re.findall(r"^FROM\s+(?:--\S+\s+)*(\S+)", dockerfile.read_text(), flags=re.MULTILINE):
+        _, _, tag = image.split("/")[-1].partition(":")
+        assert tag and tag != "latest", f"{dockerfile.parent.name}: FROM {image} sin tag de versión"
 
 
 @pytest.mark.parametrize("service", SERVICES)
