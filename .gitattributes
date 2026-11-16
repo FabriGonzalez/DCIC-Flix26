@@ -1,0 +1,8 @@
+# Normaliza los finales de línea de los archivos de texto en el repositorio.
+* text=auto
+
+# Los scripts corren dentro de contenedores Linux: con CRLF, bash falla.
+*.sh text eol=lf
+
+# El dataset comprimido no se toca.
+*.gz binary
