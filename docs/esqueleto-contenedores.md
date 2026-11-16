@@ -1,6 +1,6 @@
 # Esqueleto de contenedores
 
-> **Estado: plan final, aprobado el 2026-11-16.** F1 y F2 implementadas. Próximo paso: F3. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
+> **Estado: plan final, aprobado el 2026-11-16.** F1, F2 y F3 implementadas. Próximo paso: F4. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
 
 ## Objetivo
 
@@ -96,7 +96,8 @@ DCIC-Flix26/
 │           │   ├── mongo.py        MongoClient con reintentos
 │           │   ├── rabbit.py       pika con reconexión + declare_topology() / verify_topology()
 │           │   ├── heartbeat.py    hilo de latido → /tmp/health.json
-│           │   └── healthcheck.py  lo ejecuta Docker
+│           │   ├── healthcheck.py  lo ejecuta Docker
+│           │   └── worker.py       bucle común de los workers (stub conectado, D1 y D14)
 │           └── aio/
 │               ├── mongo.py        AsyncMongoClient con reintentos
 │               └── rabbit.py       aio-pika connect_robust + verify_topology()
@@ -154,8 +155,47 @@ COPY services/backend/app ./app
 ```
 
 - Servicios HTTP: `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"`. La imagen slim no trae `curl`.
-- Workers: el mismo JSON en `/tmp/health.json`, más la hora.
+- Workers: el mismo JSON en `/tmp/health.json`, más la hora. Las críticas son `mongodb`, `rabbitmq` y `topology` (la topología verificada, D12):
+
+  ```json
+  {"service": "ingest-consumer", "status": "ok",
+   "dependencies": {"rabbitmq": "ok", "topology": "ok", "mongodb": "ok"},
+   "info": {}, "time": "2026-11-16T21:20:03+00:00"}
+  ```
+
 - Más adelante, el `recommender` agrega `"ready": true/false`.
+
+### Workers y latido (F3)
+
+La conexión de pika (`BlockingConnection`) no es thread-safe, y solo atiende el socket (mensajes y heartbeat AMQP) cuando el hilo dueño llama a `process_data_events`. Por eso el trabajo se reparte así:
+
+```
+hilo principal (dueño de pika, sync/worker.py)    hilo del latido (sync/heartbeat.py, cada 10 s)
+process_data_events(time_limit=1) en bucle        lee HealthState: un reporte de más de 30 s es "error"
+HealthState.report("rabbitmq" / "topology") ──▶   ping a Mongo con el mismo MongoClient (thread-safe)
+verify_topology cada 10 s                         escribe /tmp/health.json (tmp + os.replace)
+decide D14: reconecta o termina con código 1      solo informa; nunca termina el proceso
+```
+
+- **Restricción para la lógica de negocio:** un worker que hace trabajo largo tiene que llamar a `process_data_events` entre partes del trabajo, o hacerlo en otro hilo y confirmar mensajes con `add_callback_threadsafe`. Si no, con más de 30 s sin reportar, su `rabbitmq` pasa a `error`, y si sigue sin atender la conexión, el broker la corta.
+- **Los 30 s son más estrictos que el corte real del broker.** Medido con el proceso congelado (SIGSTOP): RabbitMQ registró `missed heartbeats from client, timeout: 30s` y cortó la conexión **unos 88 s** después. El latido avisa a los 30 s, cuando el worker ya no cumple el intervalo de heartbeat negociado, aunque la conexión siga viva un rato más.
+- **Mongo lo comprueba el latido**, con `serverSelectionTimeoutMS` y `connectTimeoutMS` de 3 s. Con el default de pymongo (30 s), un ping a un Mongo caído tardaría más que el intervalo del latido. Al arrancar, el hilo principal espera a Mongo para detectar credenciales rechazadas, que son irrecuperables. Después, una caída de Mongo solo la informa el latido: pymongo se reconecta solo con el mismo cliente.
+- **El latido borra la nota al arrancar**, y su primer latido sale antes de que el hilo principal conecte (con `error`, logueado como "arrancando"). Un reinicio de Docker conserva `/tmp`, y una nota vieja con `ok` daría *healthy* antes de comprobar nada. En el bucle de reinicios por topología faltante no hubo ningún *healthy* falso.
+- **Python como PID 1 ignora SIGTERM si no instala un handler:** `docker stop` termina matándolo con SIGKILL (medido: código 137 sin handler, 0 con handler). `worker.main` instala uno.
+- **`up --wait` y `topology-init`: resuelto.** Con los workers dependiendo de `topology-init` con `service_completed_successfully`, `up -d --build --wait` termina con 0 (repetido varias veces).
+
+Casos de falla comprobados contra los contenedores reales (`docker stop`/`start` directo, sin compose):
+
+| Caso | Qué pasó |
+| :-- | :-- |
+| Mongo caído 60 s | El latido pasa a `mongodb: error` a los ~4 s; Docker marca *unhealthy* a los ~26 s (3 healthchecks); sin reinicios. Al volver Mongo, `ok` a los ~3 s y *healthy* en el siguiente healthcheck. |
+| Rabbit caído 45 s | `ConnectionClosedByBroker` (320 `CONNECTION_FORCED`), reintentos de 1 a 10 s (incluido `gaierror`), *unhealthy* sin reinicios. Al volver, reconexión, nueva verificación de la topología y *healthy* (~17 s para que el broker acepte AMQP y llegue el reintento). |
+| Contraseña de Rabbit incorrecta | `ProbableAuthenticationError` (403 `ACCESS_REFUSED`), código 1 sin reintentar. |
+| Contraseña de Mongo incorrecta | `OperationFailure` (código 18, `Authentication failed`), código 1 sin reintentar. |
+| Cola borrada (`rabbitmqctl delete_queue`) | `TopologyError` (404 `NOT_FOUND`) en la verificación siguiente (~2 s), código 1 y bucle de reinicios sin *healthy*. `docker compose up -d` vuelve a correr `topology-init`, y el siguiente reinicio de los workers arranca bien. |
+| Proceso congelado (SIGSTOP 90 s) | `latido vencido: escrito hace 90 s` en `State.Health.Log`; *unhealthy* a los ~60 s (30 s de nota + 3 healthchecks); **sin reinicio** (límite aceptado en D14). Con SIGCONT: `StreamLostError` (el broker ya había cortado), reconexión en 16 ms y *healthy*. |
+
+- **`up --wait` durante un bucle de reinicios falla enseguida** (`container ... is unhealthy`): `--wait` toma *unhealthy* como error y no espera a que el servicio se recupere. Un segundo `up -d --wait`, con la topología ya restaurada, termina con 0.
 
 ### Arranque y resiliencia
 
@@ -184,7 +224,7 @@ frontend: sin depends_on
   - Recuperables (`sync/rabbit.py`): `AMQPConnectionError` y **`OSError`**. Con el contenedor de `rabbitmq` detenido, su nombre deja de resolver y pika lanza `socket.gaierror`, que no es un error AMQP (encontrado en F2). Espera exponencial de 1 a 10 s.
   - Irrecuperables: credenciales rechazadas (`ProbableAuthenticationError` y afines, subclases de `AMQPConnectionError` que se excluyen del reintento), canal cerrado por el broker (`PRECONDITION_FAILED`) y topología faltante.
   - Comprobado en F2 contra el broker real: idempotencia, variable faltante, contraseña incorrecta (falla sin reintentar), cola con otros argumentos (406), broker caído que vuelve (reintenta y termina bien) y broker caído 60 s (código 1).
-- **`up --wait` y `topology-init`:** `--wait` da error si un contenedor termina mientras espera, aunque sea con código 0, salvo que otro servicio dependa de él con `service_completed_successfully` (comprobado). Por eso en F2, sin dependientes, `--wait` puede fallar según los tiempos; desde F3 los workers dependen de `topology-init` y deja de pasar.
+- **`up --wait` y `topology-init`:** `--wait` da error si un contenedor termina mientras espera, aunque sea con código 0, salvo que otro servicio dependa de él con `service_completed_successfully` (comprobado). Por eso en F2, sin dependientes, `--wait` puede fallar según los tiempos; desde F3 los workers dependen de `topology-init` y deja de pasar (comprobado en F3).
 - `verify_topology` comprueba exchanges y colas con declaraciones pasivas. AMQP no permite consultar bindings: los comprueba el test de arquitectura con `rabbitmqctl list_bindings`.
 - RabbitMQ 4.1 agrega `x-queue-type: classic` a cada cola: el test exige los argumentos de `topology.py` sin pedir que sean los únicos.
 
@@ -213,6 +253,9 @@ frontend: sin depends_on
 - **La tabla de comunicación es datos del test:** una matriz `REACHABILITY` (qué resuelve cada servicio, qué no, y si sale a internet) genera los tests de alcance y aislamiento. Cambiar la arquitectura obliga a cambiar esa tabla.
 - La topología se compara importando `dcicflix_common.topology` contra `rabbitmqctl list_queues` y `list_exchanges`.
 - Los tests de salida a internet se saltean con aviso si la máquina no tiene conexión.
+- **Matriz en F3** (`test_reachability.py`): un solo `docker compose exec` por servicio, que prueba todos los nombres y destinos y devuelve un JSON. Los nombres de servicios que todavía no existen (`frontend`) se saltean con aviso, en lugar de pasar sin probar nada. Un test estático exige una fila en `REACHABILITY` por cada servicio propio de larga vida.
+- **La salida a internet se prueba por IP (`1.1.1.1:443`) y por nombre (`one.one.one.one:443`).** Medido: en un contenedor que solo está en `internal-net`, Docker ni siquiera resuelve nombres externos (`Temporary failure in name resolution`). Probar solo por nombre no distinguiría "sin DNS" de "sin ruta". Por IP da `Network is unreachable`: el aislamiento es real.
+- Comprobado que los tests fallan con la matriz equivocada, y que se saltean con un destino inalcanzable desde el host.
 - Cada fase agrega los tests de lo que construye.
 
 ## Fases de implementación

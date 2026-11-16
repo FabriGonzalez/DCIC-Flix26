@@ -16,6 +16,7 @@ No requiere pasos manuales: la carga del dataset, la declaración de colas, la l
 
 - **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
 - **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
+- Los workers sin HTTP (`ingest-consumer`, `cleaning-agent`) dejan su estado en un archivo de latido: `docker compose exec ingest-consumer cat /tmp/health.json`. Si un servicio está *unhealthy*, el motivo aparece en `docker inspect --format '{{json .State.Health.Log}}' <contenedor>`.
 - La primera carga del dataset tarda alrededor de un minuto. Para recargarlo desde cero: `docker compose down -v`.
 
 ### Verificación de la arquitectura
@@ -28,7 +29,7 @@ pytest -m static                            # no necesita nada levantado
 docker compose up -d --wait && pytest       # todo, con el sistema levantado
 ```
 
-La arquitectura esperada (redes, puertos, servicios) está como datos en [tests/architecture/spec.py](tests/architecture/spec.py), y la topología de RabbitMQ en [topology.py](libs/common/dcicflix_common/topology.py).
+La arquitectura esperada (redes, puertos, servicios y qué nombres resuelve y alcanza cada uno) está como datos en [tests/architecture/spec.py](tests/architecture/spec.py), y la topología de RabbitMQ en [topology.py](libs/common/dcicflix_common/topology.py).
 
 ## Servicios
 
@@ -109,7 +110,7 @@ Criterio para elegir el mecanismo:
 
 Los mensajes de `interactions` que no se pueden guardar se derivan por dead-letter a la cola `interactions.errors`. `data.cleaned` es un exchange fanout: cada suscriptor tiene su propia cola (hoy, `recommender.data-cleaned`).
 
-`topology-init` declara toda la topología, definida en un único archivo ([topology.py](libs/common/dcicflix_common/topology.py)), y los servicios la verifican al arrancar, sin declararla. Así hay un solo responsable y no hay configuración manual del broker.
+`topology-init` declara toda la topología, definida en un único archivo ([topology.py](libs/common/dcicflix_common/topology.py)), y los servicios la verifican al arrancar y cada 10 s, sin declararla. Así hay un solo responsable y no hay configuración manual del broker. Si falta una cola o un exchange, el servicio termina y Docker lo reinicia hasta que la topología vuelva: `docker compose up -d` corre otra vez `topology-init`.
 
 ### Estado del sistema
 
