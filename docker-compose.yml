@@ -12,8 +12,33 @@ x-rabbit-env: &rabbit-env
   RABBITMQ_USER: ${RABBITMQ_USER:-dcicflix}
   RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-dcicflix-dev}
 
+x-mongo-env: &mongo-env
+  MONGO_HOST: mongodb
+  MONGO_USER: ${MONGO_USER:-dcicflix}
+  MONGO_PASSWORD: ${MONGO_PASSWORD:-dcicflix-dev}
+  MONGO_DB: peliculas-proyectos # fijo: lo define dataset/mongo-init.sh
+
 x-log-env: &log-env
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+# Arranque de los servicios que usan Mongo y Rabbit. Es comodidad: la garantía son
+# los reintentos del helper. Depender de topology-init además evita que
+# `up --wait` falle cuando topology-init termina (ver el plan, F2).
+x-data-depends-on: &data-depends-on
+  mongodb:
+    condition: service_healthy
+  rabbitmq:
+    condition: service_healthy
+  topology-init:
+    condition: service_completed_successfully
+
+# Workers sin HTTP: el healthcheck lee el latido /tmp/health.json (D13).
+x-worker-healthcheck: &worker-healthcheck
+  test: ["CMD", "python", "-m", "dcicflix_common.sync.healthcheck"]
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 15s
 
 services:
   mongodb:
@@ -72,6 +97,34 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+
+  # Stub conectado (D1): Mongo, Rabbit, topología verificada y latido.
+  ingest-consumer:
+    build:
+      context: .
+      dockerfile: services/ingest-consumer/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*mongo-env, *rabbit-env, *log-env]
+    networks:
+      - internal-net
+    depends_on: *data-depends-on
+    healthcheck: *worker-healthcheck
+
+  # Stub conectado (D1). egress-net: salida a la API del LLM.
+  cleaning-agent:
+    build:
+      context: .
+      dockerfile: services/cleaning-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*mongo-env, *rabbit-env, *log-env]
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    networks:
+      - internal-net
+      - egress-net
+    depends_on: *data-depends-on
+    healthcheck: *worker-healthcheck
 
 networks:
   # frontend y backend
