@@ -129,10 +129,15 @@ class Heartbeat:
         # Solo los cambios: con Mongo caído, un warning por latido sería ruido.
         if dependencies == self._last_dependencies:
             return
+        first_beat = self._last_dependencies is None
         self._last_dependencies = dict(dependencies)
         failing = [name for name, status in dependencies.items() if status != health.OK]
         if not failing:
             log.info("latido: ok %s", dependencies)
+            return
+        if first_beat:
+            # El primer latido sale antes de que el hilo principal termine de conectar.
+            log.info("latido: arrancando, esperando %s", ", ".join(failing))
             return
         details = "; ".join(f"{name}: {errors.get(name, 'sin reporte reciente')}" for name in failing)
         log.warning("latido: error (%s)", details[:500])
