@@ -21,6 +21,18 @@ La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRON
 - `backend` y `recommender` exponen `GET /health` en el puerto 8000, sin publicar en el host. Los workers sin HTTP (`ingest-consumer`, `cleaning-agent`) dejan su estado en un archivo de latido: `docker compose exec ingest-consumer cat /tmp/health.json`. Si un servicio está *unhealthy*, el motivo aparece en `docker inspect --format '{{json .State.Health.Log}}' <contenedor>`.
 - La primera carga del dataset tarda alrededor de un minuto. Para recargarlo desde cero: `docker compose down -v`.
 
+### Modo desarrollo del frontend
+
+```bash
+docker compose --profile dev up --build
+```
+
+Además de lo anterior, levanta `frontend-dev`: Vite en **http://localhost:5173** (`FRONTEND_DEV_PORT`), con el código de `services/frontend` montado y recarga en caliente al guardar. `/api` llega al `backend` igual que en producción.
+
+- Vite no chequea tipos: los errores de TypeScript aparecen recién en el build de producción (`docker compose up --build frontend`).
+- Si cambia `package.json`, los `node_modules` viejos siguen en un volumen: `docker compose --profile dev up --build -V frontend-dev`.
+- Para bajarlo: `docker compose --profile dev down`. Un `down` sin el perfil no toca `frontend-dev`.
+
 ### Verificación de la arquitectura
 
 ```bash

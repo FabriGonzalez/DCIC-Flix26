@@ -1,6 +1,6 @@
 # Esqueleto de contenedores
 
-> **Estado: plan final, aprobado el 2026-11-16.** F1 a F6 implementadas: los criterios 1 a 5 se cumplen (comprobado en un clon limpio) y el 6 lo prueban los tests `slow`. Próximo paso: F7. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
+> **Estado: plan final, aprobado el 2026-11-16.** F1 a F7 implementadas: los criterios 1 a 5 se cumplen (comprobado en un clon limpio), el 6 lo prueban los tests `slow`, y el modo desarrollo funciona con `--profile dev`. Queda F8 (CI, opcional). El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
 
 ## Objetivo
 
@@ -105,7 +105,7 @@ DCIC-Flix26/
 │               ├── monitor.py      chequeo cada 10 s y la "foto" que devuelve /health (sin dependencias)
 │               └── service.py      conexiones + monitor de backend y recommender (sin framework web)
 ├── services/
-│   ├── frontend/          Dockerfile (2 etapas), nginx.conf, package.json, vite.config.ts, src/
+│   ├── frontend/          Dockerfile (build → nginx, más la etapa dev de F7), nginx.conf, package.json, vite.config.ts, src/
 │   ├── backend/           Dockerfile, requirements.txt, app/
 │   ├── recommender/
 │   ├── ingest-consumer/
@@ -280,6 +280,39 @@ Comprobado que los tests fallan cuando tienen que fallar:
 - Los servicios arrancaron antes de que Rabbit aceptara AMQP: el `backend` reintentó 4 veces (1, 2, 4 y 8 s) y conectó. Todo *healthy* a los 39 s de que respondió el daemon, con 0 reinicios. `topology-init` no corrió, y la topología del volumen alcanzó.
 - Es la confirmación de que **`depends_on` es comodidad y los reintentos son la garantía**.
 
+### Modo desarrollo (F7)
+
+Diseño confirmado con el usuario (D5): `frontend-dev` con perfil `dev`, puerto configurable (`FRONTEND_DEV_PORT`, por defecto 5173) y la etapa `dev` en el mismo Dockerfile, sin cambiar el `up` normal. **Los tests de arquitectura cubren solo el modo producción**: no hay fila de `frontend-dev` en `REACHABILITY` ni tests estáticos con el perfil.
+
+```
+FROM node:26-alpine AS deps   npm ci
+FROM deps AS dev              CMD npm run dev     ← solo con target: dev (frontend-dev)
+FROM deps AS build            COPY . · npm run build
+FROM nginx:1.30-alpine        COPY --from=build   ← última etapa: la del frontend normal
+```
+
+- **El `up` normal no cambia** (comprobado): sin el perfil, `frontend-dev` no figura en `compose config`. BuildKit construye solo las etapas que necesita la última (`deps`, `build` y nginx), y la imagen del `frontend` salió idéntica a la anterior: no se recreó. Las opciones de `server` de `vite.config.ts` solo aplican al servidor de desarrollo.
+- `vite.config.ts` lee sus variables con `loadEnv(mode, ".", "DEV_")`, no con `process.env`. El `tsconfig` incluye `vite.config.ts` solo con los tipos de `vite/client`, y `process` rompería el `tsc --noEmit` del build. No hace falta `@types/node` ni tocar el lockfile. Las variables no llevan el prefijo `VITE_`, porque Vite las incluiría en el código del navegador.
+- `server.host: true`: por defecto Vite escucha solo en el `localhost` del contenedor.
+- `test_dockerfiles_con_tag_fijo` ignora los `FROM` que nombran una etapa anterior (`FROM deps AS dev`). Comprobado que sigue rechazando `FROM python` sin tag.
+
+Comprobado contra los contenedores reales, desde el host:
+
+| Caso | Qué pasó |
+| :-- | :-- |
+| Recarga en caliente | Un cliente del websocket de Vite, conectado por el puerto publicado como el navegador (`101 Switching Protocols`, `connected`), recibió `js-update` de `/src/App.tsx` en menos de 1 s después de guardar. El módulo servido ya traía el cambio. |
+| **Sin polling** (`FRONTEND_DEV_POLLING=false`) | Ningún `update`, ningún `hmr update` en el log, y Vite siguió sirviendo la versión vieja desde su caché. Con el código en Windows, el polling hace falta. |
+| `FRONTEND_DEV_PORT=5174` | Publicado `5174->5173`, y la recarga funciona por el 5174. **`hmr.clientPort` no hace falta:** con `hmrPort = null`, el cliente abre el websocket en el puerto de la página (`importMetaUrl.port`). Lo saqué del diseño propuesto. |
+| `backend` detenido | `/` con 200, `/api/health` con **502 `text/plain`** (`getaddrinfo ENOTFOUND backend` en el log) y `frontend-dev` *healthy*. Como no es JSON, la pantalla muestra "Backend no disponible", igual que con nginx. Al volver, 200. |
+| `backend` recreado (test de persistencia con el perfil levantado) | `frontend-dev` llegó al contenedor nuevo sin reiniciarse: Vite resuelve el nombre en cada pedido. |
+| Error de tipos en `App.tsx` | Vite lo sirvió con 200 y lo mandó por la recarga: **no chequea tipos**. El error aparece recién en el build de producción. |
+| `docker compose stop frontend-dev` | 3 s, código 143 (SIGTERM): no hace falta esperar al SIGKILL. |
+
+- **El volumen anónimo de `node_modules` sobrevive a `up --build --force-recreate`:** una marca dejada adentro siguió ahí. Si cambia `package.json`, hace falta `-V` (`--renew-anon-volumes`), y entonces la marca desaparece. `-V` deja huérfano el volumen anterior: se borra con `docker volume rm <id>`, no con `docker volume prune`, que borraría los volúmenes huérfanos de otros proyectos.
+- **Docker crea `services/frontend/node_modules` vacía en el host:** es el punto de montaje del volumen anónimo dentro del montaje del código. Ya figura en `.gitignore` y en el `.dockerignore` del frontend.
+- **`docker compose down` sin el perfil no toca `frontend-dev`,** y `public-net` queda en uso (`Resource is still in use`, código 0). Para bajar todo: `docker compose --profile dev down`. El test `slow` de persistencia exige que no queden contenedores de los servicios de producción, y por eso corre igual con el perfil levantado (comprobado: los 2 pasan, y `frontend-dev` sigue sano al final).
+- `docker compose ps` lista `frontend-dev` aunque no se pase el perfil. La suite normal pasa igual con él levantado: los tests recorren los servicios de `compose config`.
+
 ### Arranque y resiliencia
 
 ```
@@ -318,7 +351,7 @@ frontend: sin depends_on
 - `MONGO_DB=peliculas-proyectos` fijo en el compose, fuera de `.env`: el `mongo-init.sh` lo tiene escrito en el código.
 - `LLM_API_KEY` es opcional en `config.py`; el resto de las variables son obligatorias.
 - Mongo y Rabbit crean el usuario solo con el volumen vacío: cambiar credenciales exige `docker compose down -v`. Se documenta en `.env.example`.
-- Variables: `FRONTEND_PORT`, `MONGO_USER`, `MONGO_PASSWORD`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `LLM_API_KEY`, `LOG_LEVEL`.
+- Variables: `FRONTEND_PORT`, `FRONTEND_DEV_PORT` y `FRONTEND_DEV_POLLING` (F7), `MONGO_USER`, `MONGO_PASSWORD`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `LLM_API_KEY`, `LOG_LEVEL`.
 
 ### Verificación de la arquitectura (D16)
 
