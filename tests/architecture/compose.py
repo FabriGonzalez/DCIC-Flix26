@@ -2,22 +2,28 @@
 
 import json
 import subprocess
+import urllib.error
+import urllib.request
 from functools import cache
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """Ejecuta `docker compose <args>` en la raíz del repo."""
+def _run(command: list[str], check: bool) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["docker", "compose", *args],
+        command,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",
         check=check,
     )
+
+
+def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Ejecuta `docker compose <args>` en la raíz del repo."""
+    return _run(["docker", "compose", *args], check)
 
 
 @cache
@@ -49,6 +55,34 @@ def containers() -> dict[str, dict]:
     return {row["Service"]: row for row in rows}
 
 
+def inspect() -> dict[str, dict]:
+    """`docker inspect` de los contenedores del proyecto, por servicio.
+
+    Trae lo que `compose ps` no muestra, como `RestartCount` y `State.StartedAt`.
+    """
+    ids = run("ps", "--all", "--quiet").stdout.split()
+    if not ids:
+        return {}
+    found = json.loads(_run(["docker", "inspect", *ids], check=True).stdout)
+    return {c["Config"]["Labels"]["com.docker.compose.service"]: c for c in found}
+
+
+def mongosh(script: str) -> subprocess.CompletedProcess[str]:
+    """Ejecuta `script` con mongosh dentro de `mongodb`, en la base de los servicios.
+
+    Usa las credenciales ya resueltas del compose: respeta el .env.
+    """
+    env = services()["mongodb"]["environment"]
+    database = services()["backend"]["environment"]["MONGO_DB"]
+    return run(
+        "exec", "-T", "mongodb", "mongosh", "--quiet",
+        "-u", env["MONGO_INITDB_ROOT_USERNAME"],
+        "-p", env["MONGO_INITDB_ROOT_PASSWORD"],
+        "--authenticationDatabase", "admin",
+        database, "--eval", script,
+        check=False,
+    )  # fmt: skip
+
 def exec_python(service: str, code: str, *args: str) -> subprocess.CompletedProcess[str]:
     """Ejecuta `python -c <code> <args>` dentro del contenedor del servicio."""
     return run("exec", "-T", service, "python", "-c", code, *args, check=False)
@@ -65,3 +99,13 @@ def published_port(service: str, target: int) -> int:
         if port.get("target") == target and port.get("published"):
             return int(port["published"])
     raise LookupError(f"{service} no publica el puerto {target}")
+
+
+def get_from_frontend(path: str) -> tuple[int, str, str]:
+    """GET desde el host al puerto publicado del frontend: (código, content-type, cuerpo)."""
+    port = published_port("frontend", 80)
+    try:
+        response = urllib.request.urlopen(f"http://localhost:{port}{path}", timeout=10)
+    except urllib.error.HTTPError as error:
+        response = error
+    return response.status, response.headers.get("content-type", ""), response.read().decode()

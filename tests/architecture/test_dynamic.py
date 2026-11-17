@@ -1,8 +1,6 @@
 """Verificaciones sobre el sistema levantado: docker compose up -d --wait"""
 
 import json
-import urllib.error
-import urllib.request
 
 import pytest
 
@@ -117,23 +115,14 @@ def test_health_http(service, containers):
 # --- El frontend desde el host (criterios 2 y 3): la página y el proxy /api.
 
 
-def _get_from_host(path: str) -> tuple[int, str, str]:
-    port = compose.published_port("frontend", 80)
-    try:
-        response = urllib.request.urlopen(f"http://localhost:{port}{path}", timeout=10)
-    except urllib.error.HTTPError as error:
-        response = error
-    return response.status, response.headers.get("content-type", ""), response.read().decode()
-
-
 def test_frontend_sirve_la_aplicacion(containers):
-    code, content_type, body = _get_from_host("/")
+    code, content_type, body = compose.get_from_frontend("/")
     assert code == 200 and content_type.startswith("text/html")
     assert '<div id="root">' in body
 
 
 def test_api_health_llega_al_backend_a_traves_del_frontend(containers):
-    code, content_type, body = _get_from_host("/api/health")
+    code, content_type, body = compose.get_from_frontend("/api/health")
     assert content_type.startswith("application/json"), f"nginx no llegó al backend: HTTP {code}"
     assert code == 200, body
     assert json.loads(body)["service"] == "backend"
