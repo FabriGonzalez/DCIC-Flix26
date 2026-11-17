@@ -107,6 +107,25 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  # Único servicio con puerto publicado. nginx sirve el build de React y reenvía /api
+  # al backend, resolviendo su nombre en cada pedido (nginx.conf).
+  frontend:
+    build:
+      context: services/frontend # no usa el helper de Python
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    networks:
+      - public-net
+    # Sin depends_on: nginx levanta aunque el backend no esté (D12: es informativo).
+    healthcheck:
+      # Sano = nginx responde y sirve el build. La imagen alpine no trae Python ni curl.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
   # API HTTP en el 8000, sin publicar: se llega por el proxy /api del frontend.
   # public-net: frontend y salida a internet (API del LLM). internal-net: datos.
   backend:
