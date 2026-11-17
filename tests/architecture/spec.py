@@ -28,6 +28,12 @@ LONG_LIVED_RESTART = "unless-stopped"
 #   internet:     si sale a internet
 # Un nombre de un servicio que todavía no existe en el compose se saltea con aviso.
 REACHABILITY = {
+    "frontend": {
+        "resolves": {"backend"},
+        "not_resolves": {"mongodb", "rabbitmq", "recommender"},  # criterio 4
+        # public-net no puede ser internal: el backend sale a internet por ella.
+        "internet": True,
+    },
     "backend": {
         "resolves": {"mongodb", "rabbitmq", "recommender"},
         "not_resolves": set(),

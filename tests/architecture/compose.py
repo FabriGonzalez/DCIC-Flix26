@@ -52,3 +52,16 @@ def containers() -> dict[str, dict]:
 def exec_python(service: str, code: str, *args: str) -> subprocess.CompletedProcess[str]:
     """Ejecuta `python -c <code> <args>` dentro del contenedor del servicio."""
     return run("exec", "-T", service, "python", "-c", code, *args, check=False)
+
+
+def exec_sh(service: str, script: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """Ejecuta `sh -c <script> sh <args>` dentro del contenedor (imágenes sin Python)."""
+    return run("exec", "-T", service, "sh", "-c", script, "sh", *args, check=False)
+
+
+def published_port(service: str, target: int) -> int:
+    """Puerto del host publicado para el puerto `target` del servicio (respeta el .env)."""
+    for port in services()[service].get("ports", []):
+        if port.get("target") == target and port.get("published"):
+            return int(port["published"])
+    raise LookupError(f"{service} no publica el puerto {target}")
