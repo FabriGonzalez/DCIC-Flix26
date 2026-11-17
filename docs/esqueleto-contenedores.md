@@ -1,6 +1,6 @@
 # Esqueleto de contenedores
 
-> **Estado: plan final, aprobado el 2026-11-16.** F1, F2 y F3 implementadas. Próximo paso: F4. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
+> **Estado: plan final, aprobado el 2026-11-16.** F1 a F4 implementadas. Próximo paso: F5. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
 
 ## Objetivo
 
@@ -92,6 +92,7 @@ DCIC-Flix26/
 │           ├── logging.py
 │           ├── health.py           forma común del JSON de health
 │           ├── topology.py         SOLO DATOS: exchanges, colas, bindings, constantes
+│           ├── errors.py           TopologyError, común a sync/ y aio/
 │           ├── sync/
 │           │   ├── mongo.py        MongoClient con reintentos
 │           │   ├── rabbit.py       pika con reconexión + declare_topology() / verify_topology()
@@ -100,7 +101,9 @@ DCIC-Flix26/
 │           │   └── worker.py       bucle común de los workers (stub conectado, D1 y D14)
 │           └── aio/
 │               ├── mongo.py        AsyncMongoClient con reintentos
-│               └── rabbit.py       aio-pika connect_robust + verify_topology()
+│               ├── rabbit.py       aio-pika connect_robust + verify_topology()
+│               ├── monitor.py      chequeo cada 10 s y la "foto" que devuelve /health (sin dependencias)
+│               └── service.py      conexiones + monitor de backend y recommender (sin framework web)
 ├── services/
 │   ├── frontend/          Dockerfile (2 etapas), nginx.conf, package.json, vite.config.ts, src/
 │   ├── backend/           Dockerfile, requirements.txt, app/
@@ -196,6 +199,34 @@ Casos de falla comprobados contra los contenedores reales (`docker stop`/`start`
 | Proceso congelado (SIGSTOP 90 s) | `latido vencido: escrito hace 90 s` en `State.Health.Log`; *unhealthy* a los ~60 s (30 s de nota + 3 healthchecks); **sin reinicio** (límite aceptado en D14). Con SIGCONT: `StreamLostError` (el broker ya había cortado), reconexión en 16 ms y *healthy*. |
 
 - **`up --wait` durante un bucle de reinicios falla enseguida** (`container ... is unhealthy`): `--wait` toma *unhealthy* como error y no espera a que el servicio se recupere. Un segundo `up -d --wait`, con la topología ya restaurada, termina con 0.
+- **`docker kill --signal` desactiva `unless-stopped`** (encontrado en F4). Cualquier señal, aunque sea inofensiva como SIGCONT, marca el contenedor como detenido a mano. Si después el proceso termina, Docker no lo reinicia, y tampoco lo levanta cuando vuelve el daemon. Comprobado con dos contenedores iguales: el que recibió SIGCONT quedó en `exited` y el otro se reinició. Así quedó el `ingest-consumer` tras la prueba de SIGSTOP, y Docker Desktop no lo levantó al día siguiente. **Después de inyectar una falla con `docker kill --signal`, hay que hacer `docker compose restart <servicio>`**, que borra la marca. Hay que tenerlo en cuenta en F6.
+
+### Servicios HTTP (F4)
+
+`backend` y `recommender` usan `aio/` (D9): un solo hilo con un event loop, donde aio-pika atiende la conexión (heartbeat AMQP incluido) mientras el loop esté libre. Diseño confirmado con el usuario:
+
+1. **`/health` devuelve la "foto" del monitor**, sin chequear en el momento. `aio/monitor.py` corre los checks cada 10 s, en paralelo y con un timeout de 5 s cada uno. `/health` responde 200, o 503 si falla una crítica, si todavía no hubo un chequeo ("arrancando") o si la foto tiene más de 30 s. Así, el costo de `/health` no depende de cuántos lo consulten: Docker, el `frontend` (F5) por cada usuario, y el `backend` al `recommender`.
+2. **El servidor responde desde el primer segundo**, y Mongo y Rabbit se conectan en paralelo en segundo plano. El monitor vuelve a chequear apenas se abren las conexiones: *healthy* a los ~8 s del arranque.
+3. **D14 en un servidor HTTP:** una tarea no puede terminar el proceso con `sys.exit`. `on_fatal` hace `server.should_exit = True`; uvicorn cierra en orden (lifespan, conexiones) y el proceso termina con código 1. uvicorn maneja SIGTERM por su cuenta.
+4. **FastAPI vive en cada servicio** (`requirements.txt`). El helper sigue sin framework web, y las ~30 líneas de arranque se repiten en los dos `main.py`.
+
+- **Regla del event loop:** nunca bloquearlo con I/O sincrónica o cálculo pesado. El entrenamiento del `recommender` va a ir en un proceso o hilo aparte (`run_in_executor`). Con el loop bloqueado, `/health` no responde y el servicio queda *unhealthy* sin reinicio (medido abajo).
+- **`connect_robust` no reintenta la primera conexión** (medido: falla al instante con el broker inalcanzable); solo reconecta después. `aio/rabbit.connect` reintenta la primera, como `sync/`.
+- **En una conexión robusta, `is_closed` no indica si está conectada:** solo dice si se llamó a `close()`. Con el broker caído quedaba en `False`, y `/health` mostraba `rabbitmq: ok`. El estado real es el evento `connected`.
+- Irrecuperables de aiormq: `AuthenticationError`, `ProbableAuthenticationError` y `ConnectionNotAllowed`. Una cola faltante da `ChannelNotFoundEntity`, que cierra el canal pero no la conexión.
+- **Logs:** aiormq loguea un ERROR con traceback por cada corte, y queda en CRITICAL. aio-pika queda en WARNING (una línea por intento de reconexión, cada 5 s). httpx queda en WARNING. El access log de uvicorn oculta `/health`. `client_properties.connection_name` nombra cada conexión en `rabbitmqctl list_connections`, también las de pika.
+- Versiones: `fastapi==0.162.0` (la última con más de dos semanas al implementar), `uvicorn==0.54.0`, `httpx==0.28.1`. Las dependencias transitivas (starlette, pydantic) no están fijadas.
+
+Casos de falla comprobados (`docker stop`/`start` directo):
+
+| Caso | Qué pasó |
+| :-- | :-- |
+| `recommender` caído 40 s | El `backend` responde 200 y sigue *healthy* todo el tiempo; `info.recommender: error` a los ~8 s y `ok` cuando vuelve (D12). |
+| Mongo caído 60 s | 503 con `mongodb: error` a los ~7 s; *unhealthy* a los ~31 s; sin reinicios. `ok` a los ~12 s de que vuelve Mongo. El `info` del `backend` encadena: el `recommender` da 503 y el `backend` lo informa. |
+| Rabbit caído 30 s | 503 con `rabbitmq` y `topology` en `error`; `connect_robust` reintenta cada 5 s (incluido `Name or service not known`); `ok` a los ~22 s de que vuelve el broker; sin reinicios. |
+| Contraseña de Rabbit o de Mongo incorrecta | `ProbableAuthenticationError` / `OperationFailure` (18): apagado ordenado de uvicorn y código 1. |
+| Cola borrada | `TopologyError` en el chequeo siguiente, código 1 y bucle de reinicios en los dos servicios. `docker compose up -d` vuelve a correr `topology-init` y se recuperan en ~14 s. |
+| Proceso congelado (SIGSTOP) | `/health` sin respuesta (`TimeoutError`); *unhealthy* a los ~48 s (3 healthchecks con timeout de 5 s); sin reinicio (límite de D14). Con SIGCONT vuelve a 200 sin reconectar: 48 s es menos que el corte del broker (~88 s, F3). |
 
 ### Arranque y resiliencia
 
@@ -256,6 +287,7 @@ frontend: sin depends_on
 - **Matriz en F3** (`test_reachability.py`): un solo `docker compose exec` por servicio, que prueba todos los nombres y destinos y devuelve un JSON. Los nombres de servicios que todavía no existen (`frontend`) se saltean con aviso, en lugar de pasar sin probar nada. Un test estático exige una fila en `REACHABILITY` por cada servicio propio de larga vida.
 - **La salida a internet se prueba por IP (`1.1.1.1:443`) y por nombre (`one.one.one.one:443`).** Medido: en un contenedor que solo está en `internal-net`, Docker ni siquiera resuelve nombres externos (`Temporary failure in name resolution`). Probar solo por nombre no distinguiría "sin DNS" de "sin ruta". Por IP da `Network is unreachable`: el aislamiento es real.
 - Comprobado que los tests fallan con la matriz equivocada, y que se saltean con un destino inalcanzable desde el host.
+- **En F4:** el `backend` resuelve `mongodb`, `rabbitmq` y `recommender` y sale a internet (criterio 4: traducción y chat); el `recommender` no sale y no resuelve `frontend`. `test_health_http` pide `/health` desde adentro de cada contenedor y exige las críticas y las informativas de `spec.HTTP_HEALTH_INFO`.
 - Cada fase agrega los tests de lo que construye.
 
 ## Fases de implementación

@@ -16,7 +16,7 @@ No requiere pasos manuales: la carga del dataset, la declaración de colas, la l
 
 - **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
 - **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
-- Los workers sin HTTP (`ingest-consumer`, `cleaning-agent`) dejan su estado en un archivo de latido: `docker compose exec ingest-consumer cat /tmp/health.json`. Si un servicio está *unhealthy*, el motivo aparece en `docker inspect --format '{{json .State.Health.Log}}' <contenedor>`.
+- `backend` y `recommender` exponen `GET /health` en el puerto 8000, sin publicar en el host. Los workers sin HTTP (`ingest-consumer`, `cleaning-agent`) dejan su estado en un archivo de latido: `docker compose exec ingest-consumer cat /tmp/health.json`. Si un servicio está *unhealthy*, el motivo aparece en `docker inspect --format '{{json .State.Health.Log}}' <contenedor>`.
 - La primera carga del dataset tarda alrededor de un minuto. Para recargarlo desde cero: `docker compose down -v`.
 
 ### Verificación de la arquitectura
