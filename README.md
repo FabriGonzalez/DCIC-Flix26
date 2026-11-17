@@ -14,6 +14,8 @@ docker compose up --build
 
 No requiere pasos manuales: la carga del dataset, la declaración de colas, la limpieza y el entrenamiento inicial se coordinan entre los contenedores.
 
+La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el estado del sistema, que consulta a `/api/health` cada 5 s.
+
 - **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
 - **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
 - `backend` y `recommender` exponen `GET /health` en el puerto 8000, sin publicar en el host. Los workers sin HTTP (`ingest-consumer`, `cleaning-agent`) dejan su estado en un archivo de latido: `docker compose exec ingest-consumer cat /tmp/health.json`. Si un servicio está *unhealthy*, el motivo aparece en `docker inspect --format '{{json .State.Health.Log}}' <contenedor>`.

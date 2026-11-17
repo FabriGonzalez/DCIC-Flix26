@@ -1,6 +1,6 @@
 # Esqueleto de contenedores
 
-> **Estado: plan final, aprobado el 2026-11-16.** F1 a F4 implementadas. Próximo paso: F5. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
+> **Estado: plan final, aprobado el 2026-11-16.** F1 a F5 implementadas: los criterios 1 a 5 se cumplen (comprobado en un clon limpio). Próximo paso: F6. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
 
 ## Objetivo
 
@@ -227,6 +227,31 @@ Casos de falla comprobados (`docker stop`/`start` directo):
 | Contraseña de Rabbit o de Mongo incorrecta | `ProbableAuthenticationError` / `OperationFailure` (18): apagado ordenado de uvicorn y código 1. |
 | Cola borrada | `TopologyError` en el chequeo siguiente, código 1 y bucle de reinicios en los dos servicios. `docker compose up -d` vuelve a correr `topology-init` y se recuperan en ~14 s. |
 | Proceso congelado (SIGSTOP) | `/health` sin respuesta (`TimeoutError`); *unhealthy* a los ~48 s (3 healthchecks con timeout de 5 s); sin reinicio (límite de D14). Con SIGCONT vuelve a 200 sin reconectar: 48 s es menos que el corte del broker (~88 s, F3). |
+
+### Frontend (F5)
+
+Diseño confirmado con el usuario:
+
+1. **El contexto de build es `services/frontend`**, no la raíz: D4 existe para compartir el helper de Python, y el frontend no lo usa. Tiene su propio `.dockerignore` (el de la raíz solo aplica a su contexto).
+2. **La pantalla consulta `/api/health` cada 5 s** (barato gracias a la foto del monitor de F4). Distingue tres casos: el `backend` respondió con 200 ("Funcionando"), respondió con 503 ("Con problemas", con la lista de dependencias), o nginx respondió con 502/504, que es HTML y no JSON ("Backend no disponible").
+3. **El healthcheck le pide `/` a su propio nginx** con `wget` (la imagen alpine no trae Python ni curl). Sano significa que nginx sirve el build, sin importar el `backend` (D12).
+4. **Matriz:** el `frontend` resuelve `backend` y no resuelve `mongodb`, `rabbitmq` ni `recommender` (criterio 4). Sale a internet, porque `public-net` no puede ser `internal` (el `backend` sale por ella); queda registrado en la matriz para que un cambio se vea en el diff. Como la imagen no tiene Python, `SH_PROBE` prueba lo mismo con `getent` y `nc` de busybox.
+
+- Imágenes: `node:26-alpine` (LTS activa) compila y `nginx:1.30-alpine` (estable) sirve; Node no llega a la imagen final. Paquetes con versión fija y `package-lock.json` (`npm ci`): React 19.1.10, Vite 8.3.5, TypeScript 7.0.2, `@vitejs/plugin-react` 6.2.1, todos con más de dos semanas al implementar. El lockfile se generó en un contenedor (`npm install --package-lock-only`): no hace falta Node en el host.
+- `npm run build` corre `tsc --noEmit` antes de `vite build`: comprobado que un error de tipos corta el build de la imagen.
+- **Sin la variable en `proxy_pass`, nginx no arranca si el `backend` no existe:** `[emerg] host not found in upstream`, código 1 (comprobado). Con `set $backend` + `resolver`, resuelve en cada pedido.
+- `/api/health` con el `backend` recién detenido da **504** en el primer pedido (la IP en caché ya no contesta y vence `proxy_connect_timeout` de 3 s) y después **502** (`backend could not be resolved`). La pantalla trata los dos como "no disponible".
+
+Casos comprobados contra los contenedores reales, desde el host:
+
+| Caso | Qué pasó |
+| :-- | :-- |
+| `backend` detenido | `frontend` *healthy* y `/` con 200 todo el tiempo; `/api/health` 504 y después 502. Al volver el `backend`, 200 en ≤ 4 s. |
+| `frontend` reiniciado con el `backend` caído | nginx levanta y queda *healthy*; `/api/health` con 502 hasta que vuelve el `backend`. |
+| `backend` recreado con otra IP (`172.24.0.3` → `.5`, con dos contenedores ocupando direcciones) | nginx llega a la IP nueva en ≤ 3 s, sin reiniciar el `frontend`. |
+| **Criterio 1 en un clon limpio** (`git clone` de la rama, `COMPOSE_PROJECT_NAME=dcicflix-limpio`, `FRONTEND_PORT=8081`) | `up --build --wait` con código 0 en 264 s (build de todas las imágenes y carga del dataset desde cero: 19.842 películas y 61.488 reseñas); los 108 tests pasan contra ese proyecto, en el puerto 8081. Bajado con `down -v`. |
+
+`COMPOSE_PROJECT_NAME` tiene prioridad sobre el `name:` del compose: sirve para levantar una copia aislada (otros contenedores, redes y volúmenes) y correr los tests contra ella.
 
 ### Arranque y resiliencia
 
