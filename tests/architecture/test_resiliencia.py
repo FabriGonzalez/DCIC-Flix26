@@ -154,7 +154,9 @@ def test_los_datos_sobreviven_a_down_y_up(sistema_sano):
 
         start = time.monotonic()
         _ok("down")
-        assert not compose.containers(), "down dejó contenedores"
+        # Sin --profile, down no toca frontend-dev (perfil dev): si estaba levantado, sigue.
+        left = set(compose.containers()) & set(compose.services())
+        assert not left, f"down dejó contenedores: {left}"
         _ok("up", "-d", "--wait", "--wait-timeout", str(UP_TIMEOUT))
         print(f"down + up: {time.monotonic() - start:.0f} s")
 

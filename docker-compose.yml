@@ -126,6 +126,37 @@ services:
       retries: 3
       start_period: 5s
 
+  # Modo desarrollo (D5): Vite con recarga en caliente y el código montado.
+  # Solo con `docker compose --profile dev up`; sin el perfil, este servicio no existe.
+  frontend-dev:
+    profiles: [dev]
+    build:
+      context: services/frontend
+      target: dev # la etapa de Vite; el frontend normal usa la última (nginx)
+    restart: unless-stopped
+    environment:
+      # Con el código en Windows, los cambios no llegan como eventos: sin polling,
+      # Vite no se entera y sigue sirviendo la versión vieja (medido en F7).
+      DEV_USE_POLLING: ${FRONTEND_DEV_POLLING:-true}
+    ports:
+      # El navegador abre el websocket de la recarga en el mismo puerto de la página:
+      # cambiar el del host no requiere configurar nada en Vite.
+      - "${FRONTEND_DEV_PORT:-5173}:5173"
+    volumes:
+      - ./services/frontend:/app
+      # Volumen anónimo: el montaje de arriba taparía los node_modules de la imagen.
+      # Si cambia package.json: docker compose --profile dev up --build -V frontend-dev
+      - /app/node_modules
+    networks:
+      - public-net
+    # Sin depends_on: como el frontend, levanta aunque el backend no esté (D12).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   # API HTTP en el 8000, sin publicar: se llega por el proxy /api del frontend.
   # public-net: frontend y salida a internet (API del LLM). internal-net: datos.
   backend:

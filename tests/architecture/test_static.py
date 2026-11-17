@@ -54,7 +54,13 @@ def test_imagenes_con_tag_fijo(service):
 
 @pytest.mark.parametrize("dockerfile", DOCKERFILES, ids=lambda p: p.parent.name)
 def test_dockerfiles_con_tag_fijo(dockerfile):
-    for image in re.findall(r"^FROM\s+(?:--\S+\s+)*(\S+)", dockerfile.read_text(), flags=re.MULTILINE):
+    stages = set()  # `FROM deps AS dev` parte de una etapa anterior, no de una imagen
+    pattern = r"^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?"
+    for image, stage in re.findall(pattern, dockerfile.read_text(), flags=re.MULTILINE | re.IGNORECASE):
+        if stage:
+            stages.add(stage.lower())
+        if image.lower() in stages:
+            continue
         _, _, tag = image.split("/")[-1].partition(":")
         assert tag and tag != "latest", f"{dockerfile.parent.name}: FROM {image} sin tag de versión"
 
