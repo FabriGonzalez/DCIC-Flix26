@@ -1,5 +1,7 @@
 """Verificaciones sobre el sistema levantado: docker compose up -d --wait"""
 
+import json
+
 import pytest
 
 import compose
@@ -80,3 +82,31 @@ def test_bindings_del_broker(broker):
     }
     expected = {(b.exchange, b.queue, b.routing_key) for b in topology.BINDINGS}
     assert actual == expected
+
+
+# --- /health de los servicios HTTP (D12), pedido desde adentro de cada contenedor.
+
+GET_HEALTH = """
+import json, urllib.error, urllib.request
+try:
+    response = urllib.request.urlopen("http://localhost:8000/health", timeout=5)
+    code, body = response.status, response.read()
+except urllib.error.HTTPError as error:
+    code, body = error.code, error.read()
+print(json.dumps({"code": code, "body": json.loads(body)}))
+"""
+
+
+@pytest.mark.parametrize("service", sorted(spec.HTTP_HEALTH_INFO))
+def test_health_http(service, containers):
+    if containers.get(service, {}).get("State") != "running":
+        pytest.fail(f"{service} no está corriendo")
+    out = compose.exec_python(service, GET_HEALTH)
+    assert out.returncode == 0, out.stderr
+    result = json.loads(out.stdout)
+    body = result["body"]
+    assert result["code"] == 200, body
+    assert body["service"] == service
+    assert set(body["dependencies"]) == {"mongodb", "rabbitmq", "topology"}
+    # Las informativas aparecen en info, y con todo levantado están en ok.
+    assert body["info"] == dict.fromkeys(spec.HTTP_HEALTH_INFO[service], "ok")

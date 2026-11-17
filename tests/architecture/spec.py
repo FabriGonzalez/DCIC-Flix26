@@ -28,6 +28,16 @@ LONG_LIVED_RESTART = "unless-stopped"
 #   internet:     si sale a internet
 # Un nombre de un servicio que todavía no existe en el compose se saltea con aviso.
 REACHABILITY = {
+    "backend": {
+        "resolves": {"mongodb", "rabbitmq", "recommender"},
+        "not_resolves": set(),
+        "internet": True,  # public-net: API del LLM (traducción y chat)
+    },
+    "recommender": {
+        "resolves": {"mongodb", "rabbitmq"},
+        "not_resolves": {"frontend"},
+        "internet": False,
+    },
     "ingest-consumer": {
         "resolves": {"mongodb", "rabbitmq"},
         "not_resolves": {"frontend"},
@@ -38,6 +48,12 @@ REACHABILITY = {
         "not_resolves": {"frontend"},
         "internet": True,  # egress-net: API del LLM
     },
+}
+
+# Servicios con /health HTTP en el 8000, y sus dependencias informativas (D12).
+HTTP_HEALTH_INFO = {
+    "backend": {"recommender"},
+    "recommender": set(),
 }
 
 # Destinos para probar la salida a internet: por IP (ruta) y por nombre (DNS + ruta).
