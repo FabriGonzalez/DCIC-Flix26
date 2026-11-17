@@ -71,6 +71,9 @@ class DataService:
     async def _connect(self) -> None:
         try:
             await asyncio.gather(mongo.wait_until_ready(self.mongo), self._connect_rabbit())
+            # El primer chequeo del monitor corrió con las conexiones a medio abrir:
+            # sin esto, /health daría 503 hasta el siguiente, 10 s después.
+            await self.monitor.check_once()
         except Exception as exc:
             # Los errores recuperables se reintentan sin límite: lo que llega acá es irrecuperable.
             self._on_fatal(exc)
@@ -82,8 +85,9 @@ class DataService:
         await mongo.ping(self.mongo)
 
     async def _check_rabbit(self) -> None:
-        # connect_robust se reconecta solo; mientras tanto la conexión figura cerrada.
-        if self.rabbit is None or self.rabbit.is_closed:
+        # `is_closed` solo indica si se llamó a close(): mientras connect_robust reconecta,
+        # sigue en False (comprobado en F4). El estado real es el evento `connected`.
+        if self.rabbit is None or not self.rabbit.connected.is_set():
             raise ConnectionError("sin conexión con RabbitMQ")
 
     async def _check_topology(self) -> None:
