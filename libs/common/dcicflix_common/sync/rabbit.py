@@ -23,6 +23,7 @@ from pika.exceptions import (
 
 from dcicflix_common import topology
 from dcicflix_common.config import RabbitSettings
+from dcicflix_common.errors import TopologyError
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +36,7 @@ _IRRECOVERABLE_CONNECTION_ERRORS = (
 
 _MAX_RETRY_DELAY = 10.0
 
-
-class TopologyError(RuntimeError):
-    """El broker no tiene la topología de topology.py."""
+__all__ = ["TopologyError", "connect", "declare_topology", "verify_topology"]
 
 
 def connect(settings: RabbitSettings, *, retry_for: float | None = None) -> pika.BlockingConnection:
