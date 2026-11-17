@@ -50,7 +50,7 @@ def run(service: str) -> None:
     mongo.wait_until_ready(mongo_client)
 
     while True:
-        connection = rabbit.connect(rabbit_settings)
+        connection = rabbit.connect(rabbit_settings, name=service)
         try:
             _serve(connection, state)
         except AMQPConnectionError as exc:

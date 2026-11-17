@@ -39,9 +39,12 @@ _MAX_RETRY_DELAY = 10.0
 __all__ = ["TopologyError", "connect", "declare_topology", "verify_topology"]
 
 
-def connect(settings: RabbitSettings, *, retry_for: float | None = None) -> pika.BlockingConnection:
+def connect(
+    settings: RabbitSettings, *, name: str | None = None, retry_for: float | None = None
+) -> pika.BlockingConnection:
     """Conecta reintentando mientras el broker no esté disponible.
 
+    name: nombre de la conexión, visible en `rabbitmqctl list_connections client_properties`.
     retry_for: segundos máximos de reintento; None reintenta sin límite.
     """
     parameters = pika.ConnectionParameters(
@@ -50,6 +53,7 @@ def connect(settings: RabbitSettings, *, retry_for: float | None = None) -> pika
         credentials=pika.PlainCredentials(settings.user, settings.password),
         heartbeat=30,
         connection_attempts=1,
+        client_properties={"connection_name": name} if name else None,
     )
     deadline = None if retry_for is None else time.monotonic() + retry_for
     delay = 1.0

@@ -24,7 +24,7 @@ log = logging.getLogger(SERVICE)
 
 def main() -> None:
     settings = RabbitSettings.from_env()
-    connection = rabbit.connect(settings, retry_for=CONNECT_RETRY_SECONDS)
+    connection = rabbit.connect(settings, name=SERVICE, retry_for=CONNECT_RETRY_SECONDS)
     try:
         rabbit.declare_topology(connection.channel())
         rabbit.verify_topology(connection)
