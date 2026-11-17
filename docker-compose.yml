@@ -40,6 +40,15 @@ x-worker-healthcheck: &worker-healthcheck
   retries: 3
   start_period: 15s
 
+# Servicios HTTP: /health responde 200 o 503 (D12). La imagen slim no trae curl;
+# urlopen lanza una excepción ante un 503, y el comando termina con código 1.
+x-http-healthcheck: &http-healthcheck
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"]
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 15s
+
 services:
   mongodb:
     image: mongo:8.0
@@ -97,6 +106,36 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+
+  # API HTTP en el 8000, sin publicar: se llega por el proxy /api del frontend.
+  # public-net: frontend y salida a internet (API del LLM). internal-net: datos.
+  backend:
+    build:
+      context: .
+      dockerfile: services/backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*mongo-env, *rabbit-env, *log-env]
+      RECOMMENDER_URL: http://recommender:8000
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    networks:
+      - public-net
+      - internal-net
+    # Sin depends_on del recommender: es informativo (D12).
+    depends_on: *data-depends-on
+    healthcheck: *http-healthcheck
+
+  recommender:
+    build:
+      context: .
+      dockerfile: services/recommender/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*mongo-env, *rabbit-env, *log-env]
+    networks:
+      - internal-net
+    depends_on: *data-depends-on
+    healthcheck: *http-healthcheck
 
   # Stub conectado (D1): Mongo, Rabbit, topología verificada y latido.
   ingest-consumer:

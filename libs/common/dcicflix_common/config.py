@@ -68,6 +68,11 @@ def log_level() -> str:
     return os.environ.get("LOG_LEVEL", "INFO").upper()
 
 
+def recommender_url() -> str:
+    """URL base del recommender, para el backend (por ejemplo http://recommender:8000)."""
+    return _require("RECOMMENDER_URL")["RECOMMENDER_URL"].rstrip("/")
+
+
 def llm_api_key() -> str | None:
     """Opcional (D15): sin key, las funciones con LLM quedan deshabilitadas."""
     return os.environ.get("LLM_API_KEY") or None

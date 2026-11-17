@@ -1,0 +1,4 @@
+fastapi==0.162.0
+uvicorn==0.54.0
+# Consulta del /health del recommender (informativa, D12).
+httpx==0.28.1

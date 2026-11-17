@@ -117,7 +117,8 @@ class HealthMonitor:
         except self.fatal:
             raise
         except Exception as exc:  # cualquier falla del check es "no responde"
-            return health.ERROR, f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            message = str(exc).splitlines()[0] if str(exc) else ""
+            return health.ERROR, f"{type(exc).__name__}: {message}" if message else type(exc).__name__
         return health.OK, None
 
     def _log_changes(self, results: dict[str, str], errors: dict[str, str]) -> None:
@@ -129,9 +130,14 @@ class HealthMonitor:
         failing = [name for name, status in results.items() if status != health.OK]
         if not failing:
             log.info("salud: ok %s", results)
-        elif first_check:
+            return
+        if first_check:
             # El primer chequeo corre mientras las conexiones todavía se están abriendo.
             log.info("salud: arrancando, esperando %s", ", ".join(failing))
+            return
+        details = "; ".join(f"{name}: {errors.get(name, '?')}" for name in failing)[:500]
+        if any(name in self.critical for name in failing):
+            log.warning("salud: error (%s)", details)
         else:
-            details = "; ".join(f"{name}: {errors.get(name, '?')}" for name in failing)
-            log.warning("salud: error (%s)", details[:500])
+            # Las informativas no cambian el status (D12): el servicio sigue sano.
+            log.warning("salud: ok, con informativas en error (%s)", details)
