@@ -1,6 +1,6 @@
 # Esqueleto de contenedores
 
-> **Estado: plan final, aprobado el 2026-11-16.** F1 a F5 implementadas: los criterios 1 a 5 se cumplen (comprobado en un clon limpio). Próximo paso: F6. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
+> **Estado: plan final, aprobado el 2026-11-16.** F1 a F6 implementadas: los criterios 1 a 5 se cumplen (comprobado en un clon limpio) y el 6 lo prueban los tests `slow`. Próximo paso: F7. El porqué de cada elección está en el [registro de decisiones](#registro-de-decisiones); el cómo, en [Diseño](#diseño); el orden de trabajo, en [Fases de implementación](#fases-de-implementación).
 
 ## Objetivo
 
@@ -253,6 +253,33 @@ Casos comprobados contra los contenedores reales, desde el host:
 
 `COMPOSE_PROJECT_NAME` tiene prioridad sobre el `name:` del compose: sirve para levantar una copia aislada (otros contenedores, redes y volúmenes) y correr los tests contra ella.
 
+### Persistencia y reconexión (F6)
+
+Diseño confirmado con el usuario: dos tests `slow` en `test_resiliencia.py`, fuera del `pytest` habitual (`addopts = -m "not slow"`; se corren con `pytest -m slow`, que pisa al de `addopts`). Bajan el sistema y tardan ~2,5 min. Cada uno lo deja levantado y sano. Nunca usan `down -v`.
+
+1. **Persistencia (criterio 6), con centinelas.** Contar documentos no alcanza: con el volumen perdido, `mongo-init.sh` recarga el dataset y las cantidades dan igual. Antes del `down`, el test inserta un documento con un uuid nuevo (colección `_test_persistencia`) y publica un mensaje persistente con otro uuid en `interactions.errors`, que no consume nadie. Después de `down` + `up -d --wait`, exige todo *healthy*, las mismas cantidades (detecta una carga duplicada) y los dos centinelas. Al final borra la colección y vacía la cola. Si la cola ya tenía mensajes, el test se saltea en lugar de tocarlos.
+2. **Reconexión.** `docker compose stop mongodb rabbitmq` con todo corriendo. El test espera a que los cuatro servicios Python estén *unhealthy* (una caída que nadie nota no prueba nada) y comprueba D12 durante la caída: `frontend` *healthy* y `/api/health` con 503 y `mongodb`/`rabbitmq` en `error`. Después hace `start` y espera a que todo vuelva. Exige `RestartCount` sin cambios (D14: reconectar no es reiniciar) y que `topology-init` no haya vuelto a correr: la topología sale del volumen de Rabbit.
+
+- **`docker compose stop <servicio>` no detiene a los que dependen de él** (Compose 5.4, comprobado): el test puede usar Compose, sin `docker stop` directo.
+- Pika publica con `confirm_delivery()` y `delivery_mode=2`: cuando `basic_publish` vuelve, el broker ya guardó el mensaje. Rabbit no trae un cliente de línea de comandos que publique (sin panel, D8), así que el test usa pika dentro del `ingest-consumer`.
+- Tiempos medidos: `down` + `up` en 59 s. Con las dos dependencias caídas, los servicios pasan a *unhealthy* a los ~28-31 s y vuelven a *healthy* ~30-48 s después del `start`. El último suele ser un worker, por la espera exponencial de hasta 10 s de `sync/rabbit`. Rabbit volvió con otra IP (`.4` → `.3`), y todos la resolvieron solos.
+- `RestartCount` se pone en cero cuando se reinicia el daemon. El test compara antes y después dentro de la misma corrida, así que no le afecta.
+
+Comprobado que los tests fallan cuando tienen que fallar:
+
+| Falla inyectada | Qué pasó |
+| :-- | :-- |
+| SIGTERM al PID 1 del `ingest-consumer` durante la caída (`unless-stopped` lo reinicia y termina *healthy*) | Falla: `reconectar no tendría que reiniciar el contenedor (D14): {'ingest-consumer': (0, 1)}`. Un test que mirara solo el estado final habría pasado. |
+| `down -v` en lugar de `down` (en una copia aislada, `COMPOSE_PROJECT_NAME=dcicflix-f6`) | **La comparación de cantidades pasó** (el dataset se recargó) y el test falló en el centinela de Mongo: `None == {'_id': '8502…'}`. |
+| Solo `rabbitmq-data` borrado entre `down` y `up` | Todo vuelve a *healthy* (`topology-init` recrea la topología), y el test falla en el centinela de Rabbit: `0 == 1` mensajes. |
+
+**Reinicio de Docker Desktop** (`docker desktop restart`, prueba manual una vez): es el caso en que Docker levanta los contenedores `unless-stopped` sin el orden de `depends_on`, y `topology-init` (`restart: "no"`) no corre.
+
+- Docker registró el arranque de los 7 en 3 s (Rabbit, Mongo, `frontend`, `recommender`, `backend`, workers), pero los procesos loguearon recién 30-45 s después, mientras terminaba de levantar la VM. El daemon respondió a los 109 s del pedido de reinicio.
+- El `start_period` se cuenta desde el arranque del contenedor: con la VM todavía lenta, el `cleaning-agent` apareció *unhealthy* antes de llegar a conectar. Es transitorio.
+- Los servicios arrancaron antes de que Rabbit aceptara AMQP: el `backend` reintentó 4 veces (1, 2, 4 y 8 s) y conectó. Todo *healthy* a los 39 s de que respondió el daemon, con 0 reinicios. `topology-init` no corrió, y la topología del volumen alcanzó.
+- Es la confirmación de que **`depends_on` es comodidad y los reintentos son la garantía**.
+
 ### Arranque y resiliencia
 
 ```
@@ -301,10 +328,10 @@ frontend: sin depends_on
 | :-- | :-- | :-- |
 | `static` | No: lee `docker compose config --format json` | Solo el `frontend` publica puertos; todos declaran `networks:` y no existe `default`; `internal-net` es `internal: true`; tags fijos; `restart` según la tabla de arranque |
 | `dynamic` | Sí | Todos *healthy* y `topology-init` en `Exited (0)`; `localhost:8080/api/health` → 200; matriz de alcance y aislamiento; topología del broker igual a `topology.py` |
-| `slow` | Sí | Persistencia: cantidad de documentos igual tras `down` + `up` |
+| `slow` | Sí; fuera del `pytest` habitual, con `pytest -m slow` | Persistencia: tras `down` + `up`, centinelas de Mongo y Rabbit y cantidad de documentos igual. Reconexión: `stop` y `start` de Mongo y Rabbit, de vuelta a *healthy* sin reinicios |
 
 - Lo esperado vive en `tests/architecture/spec.py` (redes, redes internas, servicios con puerto, servicios de una sola vez, política de reinicio); los tests solo comparan.
-- Uso: `python -m venv .venv`, `pip install -r tests/requirements.txt`, `docker compose up -d --wait` y `pytest` (o `pytest -m static`).
+- Uso: `python -m venv .venv`, `pip install -r tests/requirements.txt`, `docker compose up -d --wait` y `pytest` (o `pytest -m static`). Los `slow`, aparte: `pytest -m slow`.
 - `compose config` omite las redes que ningún servicio usa: el test de redes compara por inclusión, y la existencia de cada conexión la prueba la matriz.
 - **La tabla de comunicación es datos del test:** una matriz `REACHABILITY` (qué resuelve cada servicio, qué no, y si sale a internet) genera los tests de alcance y aislamiento. Cambiar la arquitectura obliga a cambiar esa tabla.
 - La topología se compara importando `dcicflix_common.topology` contra `rabbitmqctl list_queues` y `list_exchanges`.

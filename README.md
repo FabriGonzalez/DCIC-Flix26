@@ -28,7 +28,8 @@ python -m venv .venv                        # Python 3.12
 .venv/Scripts/activate                      # en Linux o macOS: source .venv/bin/activate
 pip install -r tests/requirements.txt
 pytest -m static                            # no necesita nada levantado
-docker compose up -d --wait && pytest       # todo, con el sistema levantado
+docker compose up -d --wait && pytest       # todo menos slow, con el sistema levantado
+pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~2,5 min)
 ```
 
 La arquitectura esperada (redes, puertos, servicios y qué nombres resuelve y alcanza cada uno) está como datos en [tests/architecture/spec.py](tests/architecture/spec.py), y la topología de RabbitMQ en [topology.py](libs/common/dcicflix_common/topology.py).
