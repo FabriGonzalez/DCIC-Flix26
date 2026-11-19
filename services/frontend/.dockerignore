@@ -1,0 +1,4 @@
+# El contexto de build del frontend es esta carpeta.
+node_modules
+dist
+Dockerfile

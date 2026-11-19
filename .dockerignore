@@ -1,0 +1,17 @@
+# El contexto de build es la raíz del repo (D4). Todo lo que no use un Dockerfile, afuera.
+
+.git
+.env
+
+# Se monta en mongodb, no se copia a ninguna imagen (13 MB).
+dataset/
+
+docs/
+**/tests
+
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache

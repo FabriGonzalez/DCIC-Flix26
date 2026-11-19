@@ -1,0 +1,229 @@
+# Esqueleto de contenedores de DCIC-Flix.
+# Diseño y decisiones: docs/esqueleto-contenedores.md
+#
+# Todos los valores tienen un default de desarrollo (D15): `docker compose up --build`
+# funciona sin .env. Para cambiarlos, copiar .env.example a .env.
+
+name: dcicflix
+
+# Variables que reciben los servicios propios. Cada uno recibe solo las que usa (D15).
+x-rabbit-env: &rabbit-env
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_USER: ${RABBITMQ_USER:-dcicflix}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-dcicflix-dev}
+
+x-mongo-env: &mongo-env
+  MONGO_HOST: mongodb
+  MONGO_USER: ${MONGO_USER:-dcicflix}
+  MONGO_PASSWORD: ${MONGO_PASSWORD:-dcicflix-dev}
+  MONGO_DB: peliculas-proyectos # fijo: lo define dataset/mongo-init.sh
+
+x-log-env: &log-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+# Arranque de los servicios que usan Mongo y Rabbit. Es comodidad: la garantía son
+# los reintentos del helper. Depender de topology-init además evita que
+# `up --wait` falle cuando topology-init termina (ver el plan, F2).
+x-data-depends-on: &data-depends-on
+  mongodb:
+    condition: service_healthy
+  rabbitmq:
+    condition: service_healthy
+  topology-init:
+    condition: service_completed_successfully
+
+# Workers sin HTTP: el healthcheck lee el latido /tmp/health.json (D13).
+x-worker-healthcheck: &worker-healthcheck
+  test: ["CMD", "python", "-m", "dcicflix_common.sync.healthcheck"]
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 15s
+
+# Servicios HTTP: /health responde 200 o 503 (D12). La imagen slim no trae curl;
+# urlopen lanza una excepción ante un 503, y el comando termina con código 1.
+x-http-healthcheck: &http-healthcheck
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"]
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 15s
+
+services:
+  mongodb:
+    image: mongo:8.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-dcicflix}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-dcicflix-dev}
+    volumes:
+      - mongo-data:/data/db
+      # Carga el dataset solo con el volumen vacío. Sin :ro: el script descomprime ahí.
+      - ./dataset:/docker-entrypoint-initdb.d
+    networks:
+      - internal-net
+    healthcheck:
+      # --host mongodb (no localhost): durante la carga del dataset el entrypoint levanta
+      # un servidor temporal que solo escucha en 127.0.0.1. Así, healthy = carga terminada.
+      test: ["CMD", "mongosh", "--quiet", "--host", "mongodb", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      # La carga de ~80.000 documentos tardó ~40 s en una máquina de desarrollo.
+      # Margen para máquinas más lentas: no demora el healthy, solo la cuenta de fallas.
+      start_period: 120s
+
+  rabbitmq:
+    image: rabbitmq:4.1
+    hostname: rabbitmq # fijo: el nombre del nodo define dónde guarda sus datos
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-dcicflix}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-dcicflix-dev}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - internal-net
+    healthcheck:
+      # Prueba TCP al puerto AMQP, la recomendada por la documentación de RabbitMQ.
+      # `rabbitmq-diagnostics ping` responde antes de que el broker acepte conexiones.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5672"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # Declara colas y exchanges de topology.py y termina: Exited (0) es lo esperado (D10).
+  topology-init:
+    build:
+      context: .
+      dockerfile: services/topology-init/Dockerfile
+    restart: "no" # si falla, es un error real que tiene que verse
+    environment:
+      <<: [*rabbit-env, *log-env]
+    networks:
+      - internal-net
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  # Único servicio con puerto publicado. nginx sirve el build de React y reenvía /api
+  # al backend, resolviendo su nombre en cada pedido (nginx.conf).
+  frontend:
+    build:
+      context: services/frontend # no usa el helper de Python
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    networks:
+      - public-net
+    # Sin depends_on: nginx levanta aunque el backend no esté (D12: es informativo).
+    healthcheck:
+      # Sano = nginx responde y sirve el build. La imagen alpine no trae Python ni curl.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # Modo desarrollo (D5): Vite con recarga en caliente y el código montado.
+  # Solo con `docker compose --profile dev up`; sin el perfil, este servicio no existe.
+  frontend-dev:
+    profiles: [dev]
+    build:
+      context: services/frontend
+      target: dev # la etapa de Vite; el frontend normal usa la última (nginx)
+    restart: unless-stopped
+    environment:
+      # Con el código en Windows, los cambios no llegan como eventos: sin polling,
+      # Vite no se entera y sigue sirviendo la versión vieja (medido en F7).
+      DEV_USE_POLLING: ${FRONTEND_DEV_POLLING:-true}
+    ports:
+      # El navegador abre el websocket de la recarga en el mismo puerto de la página:
+      # cambiar el del host no requiere configurar nada en Vite.
+      - "${FRONTEND_DEV_PORT:-5173}:5173"
+    volumes:
+      - ./services/frontend:/app
+      # Volumen anónimo: el montaje de arriba taparía los node_modules de la imagen.
+      # Si cambia package.json: docker compose --profile dev up --build -V frontend-dev
+      - /app/node_modules
+    networks:
+      - public-net
+    # Sin depends_on: como el frontend, levanta aunque el backend no esté (D12).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # API HTTP en el 8000, sin publicar: se llega por el proxy /api del frontend.
+  # public-net: frontend y salida a internet (API del LLM). internal-net: datos.
+  backend:
+    build:
+      context: .
+      dockerfile: services/backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*mongo-env, *rabbit-env, *log-env]
+      RECOMMENDER_URL: http://recommender:8000
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    networks:
+      - public-net
+      - internal-net
+    # Sin depends_on del recommender: es informativo (D12).
+    depends_on: *data-depends-on
+    healthcheck: *http-healthcheck
+
+  recommender:
+    build:
+      context: .
+      dockerfile: services/recommender/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*mongo-env, *rabbit-env, *log-env]
+    networks:
+      - internal-net
+    depends_on: *data-depends-on
+    healthcheck: *http-healthcheck
+
+  # Stub conectado (D1): Mongo, Rabbit, topología verificada y latido.
+  ingest-consumer:
+    build:
+      context: .
+      dockerfile: services/ingest-consumer/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*mongo-env, *rabbit-env, *log-env]
+    networks:
+      - internal-net
+    depends_on: *data-depends-on
+    healthcheck: *worker-healthcheck
+
+  # Stub conectado (D1). egress-net: salida a la API del LLM.
+  cleaning-agent:
+    build:
+      context: .
+      dockerfile: services/cleaning-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*mongo-env, *rabbit-env, *log-env]
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    networks:
+      - internal-net
+      - egress-net
+    depends_on: *data-depends-on
+    healthcheck: *worker-healthcheck
+
+networks:
+  # frontend y backend
+  public-net: {}
+  # Datos y mensajería. Sin salida a internet.
+  internal-net:
+    internal: true
+  # Salida del cleaning-agent hacia la API del LLM.
+  egress-net: {}
+
+volumes:
+  mongo-data:
+  rabbitmq-data:

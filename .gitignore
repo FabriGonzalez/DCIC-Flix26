@@ -1,13 +1,19 @@
-# Secretos (ver D15 en docs/esqueleto-contenedores.md)
+# Configuración local (puede tener la API key del LLM)
 .env
 
-# Restos de una carga fallida del dataset (mongo-init.sh descomprime acá)
+# Restos de una carga fallida de mongo-init.sh
 dataset/*.json
 
 # Python
 .venv/
 __pycache__/
+*.pyc
+.pytest_cache/
 .ipynb_checkpoints/
+
+# Node
+node_modules/
+dist/
 
 # Notas personales, no se comparten con el grupo
 notasPersonales/
