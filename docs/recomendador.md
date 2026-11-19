@@ -246,11 +246,12 @@ Las reseñas tienen fecha, así que para cada usuario se entrena con sus votos m
 ## 7. Integración con la arquitectura
 
 - **Filtrar `deleted: true`** en `movies` y en `reviews` (ANOMALIAS, G1). Si no, se recomiendan copias duplicadas y cuentan votos anónimos, huérfanos o repetidos.
-- **Acordado con el grupo, falta reflejarlo en el contrato de ANOMALIAS:**
-  - Todo documento activo tiene `deleted: false`; el campo no falta.
-  - Hay API key del LLM, así que toda reseña activa tiene `rating` de 1 a 5, incluidas las ≈1.900 que se infieren del comentario.
-  - Toda reseña activa apunta a una película activa.
-  - `directors`, `cast` y `writers` pueden faltar (238, 204 y 995 películas en el crudo); el recomendador las trata como listas vacías.
+- **Aclaraciones del contrato:** acordadas con el grupo y registradas en [ANOMALIAS, sección 7](../analysis/ANOMALIAS.md#aclaraciones-acordadas-2026-11-19). Para el recomendador implican:
+  - Filtrar con `deleted: false`, porque el campo siempre está.
+  - Todo voto activo tiene `rating` de 1 a 5.
+  - Todo voto activo apunta a una película activa.
+  - `directors`, `cast` y `writers` que faltan se tratan como listas vacías.
+  - El `plot` se puede embeber antes de que termine la limpieza (R17).
 - **Votos nuevos:** llegan a MongoDB por `ingest-consumer`. Como el perfil (4.2) es una suma, se puede armar en cada petición, leyendo los votos del usuario con una consulta indexada por `user_id`, sin reentrenar.
 - **Cálculo por petición (R15):** el README pide que ninguna petición calcule similitudes contra todo el catálogo. Hay dos opciones:
   - Precalcular los ~50 vecinos más cercanos de cada película y armar la recomendación juntando los vecinos de lo que el usuario votó bien. Respeta la regla.
@@ -274,9 +275,8 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 1. Cómo combinar los votos propios con IMDb (R4).
 2. El valor de `m` (R5) y el de `k` para el punto medio (R10).
 3. Confirmar las filas por género (R6) y no hacer onboarding (R7).
-4. Confirmar que se embebe en paralelo con la limpieza (R17) y medir cuánto tarda la limpieza, para saber si el arranque entra en los 10 minutos.
+4. Confirmar que se embebe en paralelo con la limpieza (R17). Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. Vecinos precalculados o producto por petición (R15).
 6. Pesos de las señales (R9), definidos con la evaluación (R13).
 7. Guardar los vectores en un volumen, para que el segundo arranque tarde pocos segundos (ya figura en el README; ver 4.4).
 8. Recalcular los números de la sección 2 sobre la base limpia.
-9. Pasar al contrato de ANOMALIAS los acuerdos de la sección 7.

@@ -254,6 +254,16 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 | comentario oculto | marca a nivel comentario | Distinta del soft delete: el voto sigue contando. |
 | unicidad | — | Como máximo un voto visible por usuario y película. |
 
+### Aclaraciones acordadas (2026-11-19)
+
+Confirmadas por el grupo al revisar el contrato desde el recomendador ([docs/recomendador.md](../docs/recomendador.md)):
+
+- **`deleted` siempre presente:** todo documento activo tiene `deleted: false`, y los descartados, `deleted: true`. El campo nunca falta.
+- **LLM obligatorio:** hay API key, así que toda reseña activa tiene `rating` entero de 1 a 5, incluidas las ≈1.900 que se infieren del comentario (B5, B6). La marca `done` y `data.cleaned` se emiten con la inferencia terminada.
+- **Integridad referencial:** toda reseña activa apunta a una película activa (resultado de G2 y B11).
+- **Listas de personas:** `directors`, `cast` y `writers` pueden faltar, igual que `genres`. En el crudo faltan en 238, 204 y 995 películas.
+- **`plot` no se modifica:** ninguna regla lo cambia. La única excepción es la fusión de duplicados (A5), que puede quedarse con el plot de otra copia (2 de los 651 grupos). El recomendador embebe los plots mientras corre la limpieza, así que si una regla futura modifica `plot`, hay que avisarle.
+
 ## 8. Pendientes
 
 ### Para el grupo
@@ -261,6 +271,7 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 1. **¿Qué campos de `movies` usan la ficha y el recomendador?** Define cuánto invertir en cada campo. Por ejemplo, `tomatoes` (A26, A27) hoy no se corrige porque no se sabe si se usa.
 2. **`mergedInto` en las copias fusionadas:** propuesta para que las copias de películas que van a soft delete guarden el `_id` de la ganadora. El `cleaning-agent` ya tiene ese dato. Sirve para redirigir reseñas que lleguen después con un id viejo y para explicar la fusión en la auditoría.
 3. **Promedio de estrellas vs. contador de reseñas (A16):** el promedio incluye los votos de reseñas con comentario oculto y el contador no, así que pueden no coincidir ("★ 4.2 (8 reseñas)" calculado con 10 votos). Hay que decidir si se muestran votos y reseñas por separado o si se documenta.
+4. **Sugerencia, no es parte del contrato: medir cuánto tarda la limpieza completa.** El profesor tiene que poder probar la app en unos 10 minutos desde cero. El recomendador tarda ≈6 minutos en embeber los plots y lo hace en paralelo con la limpieza (recomendador, 4.4), así que sirve saber cuál de los dos termina último.
 
 ### Para la cátedra
 
