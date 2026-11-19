@@ -25,12 +25,14 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R7 | Onboarding (preguntar gustos al entrar) | No hacerlo: en la demo, los votos cumplen ese papel | propuesta |
 | R8 | Usuario con votos | Por contenido, con tres señales: plot, géneros y personas | decidida |
 | R9 | Pesos de las tres señales | Se ajustan con la evaluación | abierta |
+| R16 | Señal faltante en una película | Pesos fijos: el término vale 0 y no se redistribuye | decidida |
 | R10 | Perfil del usuario | Suma de vectores ponderada por `estrellas − punto medio` | propuesta |
 | R11 | Filtrado colaborativo | No se usa: no hay votos suficientes | descartada |
 | R12 | Híbrido contenido + colaborativo | No aplica, por R11 | descartada |
 | R13 | Evaluación | División temporal por usuario, contra el ranking de popularidad | propuesta |
-| R14 | Modelo de embeddings del plot | Local, dentro del contenedor | abierta |
+| R14 | Modelo de embeddings del plot | Local, dentro del contenedor: se descarga en el build y embebe al arrancar | decidida |
 | R15 | Cálculo por petición | Vecinos precalculados, o producto contra todo el catálogo | abierta |
+| R17 | Cuándo se embebe | Al arrancar, en paralelo con la limpieza, con el hash del plot como clave | propuesta |
 
 ## 2. Datos disponibles
 
@@ -136,8 +138,7 @@ La misma similitud sirve para "Películas similares".
 **Plot:**
 
 - Se usa `plot` y no `fullplot`. `plot` está en todas las películas; `fullplot` falta en unas 300 y es largo, y los modelos chicos cortan el texto (alrededor de 256 sub-palabras).
-- El modelo corre dentro del contenedor (R14), porque `recommender` está en `internal-net`, sin internet. Un modelo como `all-MiniLM-L6-v2` (384 dimensiones) ocupa unos 30 MB para todo el catálogo.
-- La alternativa es que el `cleaning-agent`, que tiene salida a internet, calcule los embeddings y los guarde en MongoDB.
+- El modelo y su uso se detallan en [4.4](#44--embeddings-del-plot-r14-r17).
 
 **Personas:**
 
@@ -146,6 +147,29 @@ La misma similitud sirve para "Películas similares".
 - **Se quitan los nombres que aparecen en una sola película:** nunca coinciden con nada. Medido por campo, de unos 76.000 nombres distintos quedan unos 22.000.
 - **Se quita el rol entre paréntesis:** la limpieza lo conserva (ANOMALIAS, A18), y sin quitarlo `'Stephen King (novel)'` y `'Stephen King'` no coinciden.
 - **El carácter perdido `è` (A13) no afecta:** un mismo nombre queda escrito igual en todas sus películas, así que las coincidencias se mantienen.
+
+**Señal faltante (R16):** con pesos fijos, si una película no tiene una señal, ese término vale 0 y los otros dos quedan igual. No se redistribuye su peso. Medido sobre el dataset crudo:
+
+| Caso | Películas |
+| :-- | --: |
+| Sin `directors`, `cast` ni `writers` | 0 |
+| Con personas, pero ninguna compartida con otra película | 990 |
+| Sin `genres` | 43 |
+| Sin `genres` ni personas compartidas (solo les queda el plot) | 7 |
+
+Con la limpieza, las 990 pueden subir un poco: hoy algunas comparten nombres solo con su propia copia duplicada.
+
+Para personas, el 0 es el caso normal: el **99,8 %** de los pares de películas no comparte a nadie (cada película comparte alguna persona con una mediana de 26 otras). Una película sin personas está en la misma situación que casi cualquier otra frente a casi todo el catálogo: no recibe un bonus que casi nadie recibe.
+
+Alternativas descartadas:
+
+| Alternativa | Por qué no |
+| :-- | :-- |
+| Renormalizar: dividir por la suma de los pesos de las señales presentes | "No se sabe" le gana a "se sabe que no coinciden": las películas con menos metadata suben en todas las listas |
+| Imputar el valor típico de la señal | Para personas da lo mismo que pesos fijos (el valor típico es ≈ 0) |
+| Coseno sobre el vector concatenado | Renormaliza a medias, sin control explícito |
+
+En "Películas similares a A", si a A le falta una señal, el término es igual contra todas las candidatas y el orden no cambia: la regla solo importa cuando la que no tiene la señal es la candidata. Pesos fijos también permite calcular el puntaje como un solo producto de matrices (R15). Si la evaluación (R13) mostrara que renormalizar da mejor NDCG, se revisa.
 
 ### 4.2 · Perfil del usuario (R10)
 
@@ -170,6 +194,38 @@ Se recomiendan las películas más cercanas al perfil (por coseno), excluyendo l
 - **Piso de calidad:** sumar un término `β·WR` al puntaje, para que la cercanía al perfil no saque películas malas.
 - **Diversidad (MMR):** penalizar candidatos muy parecidos a los ya elegidos, para no devolver diez películas casi iguales.
 
+### 4.4 · Embeddings del plot (R14, R17)
+
+**Qué es un embedding acá:** el modelo ya viene entrenado y no se ajusta con nuestros datos. Embeber es aplicar una función fija, `vector = f(plot)`, que depende solo del texto y de la versión del modelo. No depende de los votos, de los usuarios ni de las demás películas. Lo que sí se aprende de nuestros datos (TF-IDF de personas, `WR`, perfiles, vecinos) se calcula al recibir `data.cleaned`.
+
+**Decisión (R14):** el modelo corre dentro del contenedor `recommender`. Se descarga en el `docker build`: los `RUN` del Dockerfile usan la red de build, que tiene internet. En ejecución, el contenedor sigue en `internal-net`, sin salida (criterio 4 del esqueleto).
+
+Medido en una PC con Windows y 4 CPUs, con `fastembed` (ONNX, sin torch) y `sentence-transformers/all-MiniLM-L6-v2`:
+
+| Paso | Tiempo | Tamaño |
+| :-- | --: | --: |
+| Instalar `fastembed` | 79 s | 182 MB |
+| Descargar y cargar el modelo | 11 s | 273 MB |
+| Embeber los 19.842 plots | **376 s** | 384 dimensiones |
+
+**Restricción:** el profesor tiene que poder probar la app en unos 10 minutos desde cero, y el build con la carga del dataset ya tarda 264 s (esqueleto, F7). Los 6 minutos de embeddings no entran si se hacen después de la limpieza.
+
+**Propuesta (R17): embeber en paralelo con la limpieza.**
+
+- Al arrancar, el `recommender` lee los `plot` crudos y los embebe sin esperar `data.cleaned`. Puede hacerlo porque la limpieza no modifica `plot`: no hay ninguna regla sobre ese campo (ANOMALIAS, sección 6).
+- **La clave es un hash del texto, no el `_id`.** Al fusionar duplicados, cada campo se toma de la copia más reciente que lo tenga válido (ANOMALIAS, A5), así que el `plot` de la ganadora puede venir de una copia perdedora. Pasa en 2 de los 651 grupos (*Little Fugitive*, *The Personals*). Como se embeben los plots de todas las copias, el plot ganador siempre está.
+- Al recibir `data.cleaned`, se busca el vector de cada película activa por el hash de su `plot`. Si no está (un plot nuevo o modificado), se embebe en el momento.
+- Los vectores se guardan en un volumen del `recommender`, para que el segundo arranque no embeba de nuevo (pendiente 7). En MongoDB no, porque el `recommender` solo lee de ahí.
+- Falta medir cuánto tarda la limpieza: si tarda más que el embedding, este último queda oculto.
+
+**Alternativas descartadas:**
+
+| Alternativa | Por qué no |
+| :-- | :-- |
+| El `cleaning-agent` calcula los embeddings | Es trabajo del recomendador; el que limpia no genera información nueva |
+| API de embeddings en la nube | El `recommender` necesitaría salida a internet y una key; sin key no habría recomendaciones |
+| Vectores precalculados y commiteados en el repo (≈15 MB) | Daban los mismos vectores sin costo al arrancar. El grupo eligió el modelo local al arrancar |
+
 ## 5. Descartado: filtrado colaborativo (R11, R12)
 
 El filtrado colaborativo recomienda según quién votó qué, sin mirar el contenido: "a quienes les gustó X también les gustó Y". Puede funcionar comparando películas (item-item) o factorizando la matriz usuario × película. En los dos casos necesita **muchas películas con votantes en común**, y este dataset no las tiene:
@@ -190,6 +246,11 @@ Las reseñas tienen fecha, así que para cada usuario se entrena con sus votos m
 ## 7. Integración con la arquitectura
 
 - **Filtrar `deleted: true`** en `movies` y en `reviews` (ANOMALIAS, G1). Si no, se recomiendan copias duplicadas y cuentan votos anónimos, huérfanos o repetidos.
+- **Acordado con el grupo, falta reflejarlo en el contrato de ANOMALIAS:**
+  - Todo documento activo tiene `deleted: false`; el campo no falta.
+  - Hay API key del LLM, así que toda reseña activa tiene `rating` de 1 a 5, incluidas las ≈1.900 que se infieren del comentario.
+  - Toda reseña activa apunta a una película activa.
+  - `directors`, `cast` y `writers` pueden faltar (238, 204 y 995 películas en el crudo); el recomendador las trata como listas vacías.
 - **Votos nuevos:** llegan a MongoDB por `ingest-consumer`. Como el perfil (4.2) es una suma, se puede armar en cada petición, leyendo los votos del usuario con una consulta indexada por `user_id`, sin reentrenar.
 - **Cálculo por petición (R15):** el README pide que ninguna petición calcule similitudes contra todo el catálogo. Hay dos opciones:
   - Precalcular los ~50 vecinos más cercanos de cada película y armar la recomendación juntando los vecinos de lo que el usuario votó bien. Respeta la regla.
@@ -213,8 +274,9 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 1. Cómo combinar los votos propios con IMDb (R4).
 2. El valor de `m` (R5) y el de `k` para el punto medio (R10).
 3. Confirmar las filas por género (R6) y no hacer onboarding (R7).
-4. Modelo de embeddings y dónde se calcula (R14).
+4. Confirmar que se embebe en paralelo con la limpieza (R17) y medir cuánto tarda la limpieza, para saber si el arranque entra en los 10 minutos.
 5. Vecinos precalculados o producto por petición (R15).
 6. Pesos de las señales (R9), definidos con la evaluación (R13).
-7. Si el modelo se guarda en un volumen, para que el segundo arranque tarde pocos segundos (ya figura en el README).
+7. Guardar los vectores en un volumen, para que el segundo arranque tarde pocos segundos (ya figura en el README; ver 4.4).
 8. Recalcular los números de la sección 2 sobre la base limpia.
+9. Pasar al contrato de ANOMALIAS los acuerdos de la sección 7.
