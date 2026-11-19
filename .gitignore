@@ -1,0 +1,13 @@
+# Secretos (ver D15 en docs/esqueleto-contenedores.md)
+.env
+
+# Restos de una carga fallida del dataset (mongo-init.sh descomprime acá)
+dataset/*.json
+
+# Python
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+
+# Notas personales, no se comparten con el grupo
+notasPersonales/
