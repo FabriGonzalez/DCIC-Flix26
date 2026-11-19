@@ -9,7 +9,11 @@ dataset/*.json
 __pycache__/
 *.pyc
 .pytest_cache/
+.ipynb_checkpoints/
 
 # Node
 node_modules/
 dist/
+
+# Notas personales, no se comparten con el grupo
+notasPersonales/
