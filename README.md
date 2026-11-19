@@ -192,7 +192,7 @@ Ninguna petición reentrena el modelo ni calcula similitudes contra todo el cat�
 Decisiones abiertas:
 
 - **LLM:** se asume API externa con API key, a confirmar con la cátedra. Si pasa a ser un modelo local, se agrega un contenedor `ollama` y se elimina `egress-net`.
-- **Algoritmo del recomendador**, y si el modelo se guarda en un volumen para que el segundo arranque tarde pocos segundos.
+- **Algoritmo del recomendador:** la estrategia y lo que falta definir están en [docs/recomendador.md](docs/recomendador.md). Queda abierto también si el modelo se guarda en un volumen para que el segundo arranque tarde pocos segundos.
 - **Lectura de datos sucios:** cómo tolera el `backend` los formatos corruptos mientras dura la limpieza.
 - **Caída de `cleaning-agent` a mitad de la limpieza:** el proceso debe poder repetirse o retomarse sin duplicar la auditoría.
 - **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
