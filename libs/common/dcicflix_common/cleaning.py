@@ -1,16 +1,17 @@
 """Marca de limpieza (README, "Estados del sistema"). SOLO DATOS, como topology.py.
 
-Es el único lugar con estos nombres: la escribe el cleaning-agent y la leen el backend
-(GET /status) y el recommender.
+La escribe el cleaning-agent y la leen el backend (GET /status) y el recommender. La forma
+es la del cleaning-agent (services/cleaning-agent/app/store.py: STATE, STATE_ID):
 
-    db.system  {_id: "cleaning", state: "pending" | "running" | "done"}
+    db.cleaning  {_id: "state", status: "pending" | "running" | "done",
+                  rawCopied, eventPublished, startedAt, finishedAt}
 
 Que falte el documento equivale a "pending": la limpieza todavía no empezó.
 """
 
-COLLECTION = "system"
-DOCUMENT_ID = "cleaning"
-STATE_FIELD = "state"
+COLLECTION = "cleaning"
+DOCUMENT_ID = "state"
+STATUS_FIELD = "status"
 
 PENDING = "pending"
 RUNNING = "running"

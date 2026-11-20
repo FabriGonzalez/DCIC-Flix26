@@ -43,7 +43,7 @@ class VoteTotals:
 async def read_flag(db: AsyncDatabase) -> str | None:
     """El estado de la marca de limpieza, o None si todavía no existe."""
     doc = await db[cleaning.COLLECTION].find_one({"_id": cleaning.DOCUMENT_ID})
-    return None if doc is None else doc.get(cleaning.STATE_FIELD)
+    return None if doc is None else doc.get(cleaning.STATUS_FIELD)
 
 
 async def read_all_plots(db: AsyncDatabase) -> list:
