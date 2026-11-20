@@ -65,7 +65,7 @@ El orden importa: varias reglas usan el resultado de otras (A8).
 - **Problema:** la misma película aparece varias veces. Hay 651 grupos por `imdb.id` (1.348 documentos) y 4 pares más con `imdb.id` distinto.
 - **Criterio (A3):** mismo `imdb.id`. Se descartó título + año porque da 21 falsos positivos (*Black Rain* de 1989 son dos películas: una de Ridley Scott y otra de Shōhei Imamura) y no detecta 37 grupos con el año o el título sucios.
 - **Regla secundaria (A4):** distinto `imdb.id`, pero mismo título normalizado, año y duración, **y** al menos un campo identificatorio no vacío que coincida (`directors` o `cast`). Detecta exactamente *Confessions of a Dangerous Mind*, *Eros*, *Divide and Conquer* y *The Kingdom*, y ninguno de los 21 homónimos.
-- **Fusión (A5, A6):** cada campo se toma de la copia más reciente (por `lastupdated`) que lo tenga válido. Si dos copias empatan en fecha, gana la que tiene más campos completos y, si siguen empatadas, el `_id` mayor. No se pierde información: por ejemplo, 9 años en `null` se recuperan de otra copia.
+- **Fusión (A5, A6):** cada campo se toma de la copia más reciente (por `lastupdated`) que lo tenga válido. Si dos copias empatan en fecha, gana la que tiene más campos completos y, si siguen empatadas, el `_id` mayor. No se pierde información: por ejemplo, 9 años en `null` se recuperan de otra copia. La fusión entra a los subdocumentos y toma las listas enteras (ver sección 7, cambios del 2026-11-20).
 - **Copias perdedoras (G2):** pasan a soft delete. Sus reseñas se reasignan a la ganadora (ver sección 5).
 
 ### P1 · `year`
@@ -222,15 +222,18 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 
 ### General
 
-- **Soft delete (G1, G2):** los documentos descartados no se borran. Se marcan con `deleted: true` y un motivo. **Todo servicio que lee tiene que filtrarlos.**
+- **Soft delete (G1, G2):** los documentos descartados no se borran. Se marcan con `deleted: true` y un motivo en `deletedReason`. **Todo servicio que lee tiene que filtrarlos** (`{ deleted: false }`). Los campos de esta sección están siempre presentes: si no aplican valen `false` o `null`.
 - **`null` significa "no se sabe".** El valor original de todo campo corregido o anulado vive en la auditoría, no en el documento.
 
 ### `movies`
 
 | Campo | Tipo | Garantía |
 | :-- | :-- | :-- |
+| `deleted` | `bool` | `true` en las copias duplicadas descartadas. |
+| `deletedReason` | `string` o `null` | `"duplicateMovie"`; `null` si está activa. |
+| `mergedInto` | `ObjectId` o `null` | `_id` de la copia ganadora, siempre una película activa; `null` si está activa. |
 | `year` | `int` o `null` | Para series, año de inicio. `null` si no se pudo rescatar ni completar desde una copia. |
-| `runtime` | `int` o `null` | Minutos, positivo. El frontend lo formatea para mostrarlo. |
+| `runtime` | `int` o `null` | Minutos, positivo. El frontend lo formatea para mostrarlo. Nunca falta: si no se sabe, `null`. |
 | `genres` | lista de `string` | Sin espacios sobrantes. Puede faltar. |
 | `title` | `string` | Sin espacios al inicio ni al final. |
 | `imdb.rating` | `double` o `null` | Escala 0–10, nunca `0` como "desconocido". `null` si `imdb.votes` es `null`. |
@@ -250,8 +253,10 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 | :-- | :-- | :-- |
 | `rating` | `int` 1–5 | Puede venir del texto (regex o LLM); el origen queda en la auditoría. |
 | `date` | `Date` o `null` | `null` si la fecha original era imposible o desconocida. |
-| `datePrecision` | `"day"` o `"year"` | `"year"` para las `circa`: el frontend muestra solo el año. |
-| comentario oculto | marca a nivel comentario | Distinta del soft delete: el voto sigue contando. |
+| `datePrecision` | `"day"`, `"year"` o `null` | `"year"` para las `circa`: el frontend muestra solo el año. `null` si y solo si `date` es `null`. |
+| `deleted` | `bool` | `true` si la reseña se descartó. |
+| `deletedReason` | `string` o `null` | `"anonymous"` (B4), `"orphan"` (B11), `"duplicateVote"` (B13) o `"noContent"` (B12); `null` si está activa. Un solo motivo: el de la primera regla que la descarta. |
+| `commentHidden` | `bool` | `true` si el comentario es basura o sin contenido (B7, B8). Distinto del soft delete: el voto sigue contando y el texto queda en la base, pero no se muestra. |
 | unicidad | — | Como máximo un voto visible por usuario y película. |
 
 ### Aclaraciones acordadas (2026-11-19)
@@ -264,14 +269,44 @@ Confirmadas por el grupo al revisar el contrato desde el recomendador ([docs/rec
 - **Listas de personas:** `directors`, `cast` y `writers` pueden faltar, igual que `genres`. En el crudo faltan en 238, 204 y 995 películas.
 - **`plot` no se modifica:** ninguna regla lo cambia. La única excepción es la fusión de duplicados (A5), que puede quedarse con el plot de otra copia (2 de los 651 grupos). El recomendador embebe los plots mientras corre la limpieza, así que si una regla futura modifica `plot`, hay que avisarle.
 
+### Cambios al implementar el `cleaning-agent` (2026-11-20)
+
+Decisiones que el análisis no definía y aparecieron al escribir el código. Las tablas de arriba ya las incluyen.
+
+- **`runtime` nunca falta:** las 225 películas sin el campo pasan a `runtime: null`, como pide el tipo "`int` o `null`". Después de la fusión quedan 310 activas en `null`.
+- **`datePrecision` puede ser `null`:** lo es si y solo si `date` es `null` (227 reseñas con `yesterday` o fecha futura). Una precisión de día para una fecha desconocida diría algo falso.
+- **Campos de soft delete:** además de `deleted`, las películas tienen `deletedReason` y `mergedInto`, y las reseñas, `deletedReason` y `commentHidden`. Están siempre presentes, igual que `deleted`.
+- **Un solo motivo por reseña descartada:** se aplican en orden B4, B11, B13, B12 y queda el primero. En el dataset no hay solapamientos que cambien los números: ningún voto duplicado es huérfano, y las anónimas no participan de B13.
+- **Alcance de la fusión (A5):** entra a los subdocumentos, así que `imdb.rating` puede venir de otra copia aunque el resto de `imdb` sea de la ganadora. Las listas (`cast`, `genres`, …) se toman enteras de una sola copia, porque mezclarlas inventaría un elenco que no existe. `num_mflix_comments` no se fusiona porque se recalcula al final (A16).
+- **`tomatoes` mezclado en 2 películas:** en *Confessions of a Dangerous Mind* y *Divide and Conquer*, unidas por A4 (cada copia tenía su propio `imdb.id` y su propio registro de Rotten Tomatoes), la fusión completó `critic`, `fresh`, `rotten`, `viewer` y otros subcampos desde la otra copia. Los datos quedan coherentes entre sí (`fresh + rotten = critic.numReviews`), pero `tomatoes.lastUpdated` es el de la ganadora. **Se deja así** porque `tomatoes` no se usa (A26). Si se empieza a usar, conviene tratarlo como un bloque que no se mezcla.
+- **Reseñas para el LLM: 1.884, no 1.894.** El rating se infiere solo en reseñas activas, y 10 de las 1.894 van a soft delete (anónimas, huérfanas o votos duplicados).
+- **Qué no va a la auditoría:** los campos que se agregan sin corregir un valor (`deleted: false`, `deletedReason: null`, `datePrecision`, el `runtime: null` de un campo faltante) y los cambios de tipo sin cambio de valor (`imdb.rating` `7` → `7.0`). Todo lo demás registra campo, regla, valor original y valor nuevo.
+  - **`lastupdated` (A21) tampoco va a la auditoría:** viene como texto en las 19.842 películas, así que convertirlo a `Date` es preparar el formato, no corregir una anomalía. Registrarlo era el 42 % de los cambios de `movies` y hacía que la métrica "películas modificadas" diera 100 %. El original queda en `moviesRaw`.
+  - **En cambio, `'1989'` → `1989` (P1) y `'4'` → `4` (B14) sí van**, aunque el valor sea el mismo: el texto aparece solo en algunos documentos, es suciedad del dataset y detectarla es parte del trabajo del agente. **Criterio:** se registra lo que corrige una anomalía (algo que distingue a unos documentos de otros); no se registra una conversión de formato que se aplica igual a todos ni un cambio de representación sin significado. La auditoría es lo que muestra `/audit`, no un respaldo del original.
+- **Forma de la auditoría: un registro por documento.** Lleva el mismo `_id` que la película o la reseña y la lista de sus cambios en el orden en que se aplicaron. Repetir la limpieza reemplaza el registro en lugar de duplicarlo, y el detalle de un documento es una sola lectura. Las métricas por regla se calculan desarmando las listas (`$unwind`). La lista tiene techo: el máximo son 10 cambios (*Confessions of a Dangerous Mind*). Sobre el dataset: 18.105 películas con 26.894 cambios y 8.155 reseñas con 8.608 cambios, sin contar el LLM.
+- **Caída a mitad de la limpieza: se repite desde el crudo, no se retoma.** Antes de escribir nada, el agente copia `movies` y `reviews` a `moviesRaw` y `reviewsRaw` (una sola vez; la marca registra que la copia está completa y nunca se vuelve a copiar desde `movies`, que podría estar a medio limpiar). Cada corrida lee de esa copia, reemplaza cada documento por `_id` y escribe la auditoría sin duplicados, así que correrla dos veces da lo mismo que una. Si al arrancar la marca dice `running`, se repite todo. **Todo servicio que lee usa `movies` y `reviews`; las copias `Raw` son solo del agente.**
+  - **Por qué no se retoma desde donde quedó (puntos de control):** la limpieza es global, no se divide en lotes independientes. La fusión de duplicados cambia películas y reseñas a la vez, y el contador de reseñas depende de todas las reseñas, así que no hay un "lote 3 de 10" que se pueda dar por terminado. Además, rehacer las reglas cuesta segundos: retomar agrega complejidad sin ahorrar tiempo.
+  - **Otras opciones descartadas:** escribir en colecciones aparte y renombrarlas al final (el renombre es atómico por colección, pero no entre `movies`, `reviews` y la auditoría: una caída entre dos renombres pierde el crudo de una sola) y transacciones (el Mongo del compose no es replica set, y una transacción de 80.000 documentos choca con sus límites).
+  - **Pendiente para el LLM:** repetir no puede significar volver a pagar ≈1.900 llamadas; sus respuestas se guardan para reusarlas (se define al implementarlo).
+- **Colecciones nuevas del agente.** Además de `moviesRaw` y `reviewsRaw` (solo del agente):
+
+  | Colección | Documento | Quién la lee |
+  | :-- | :-- | :-- |
+  | `cleaning` | Uno solo, `_id: "state"`: `status` (`pending`, `running` o `done`; sin documento equivale a `pending`), `rawCopied`, `eventPublished`, `startedAt`, `finishedAt` | El `backend` (`status`, para `GET /status`) y el `recommender` (¿`done`?) |
+  | `audit` | Uno por documento con cambios: `_id` (el de la película o la reseña), `collection` (`"movies"` o `"reviews"`) y `changes`, una lista de `{field, rule, before, after, note}` en orden | El `backend`, para `/audit` |
+
+- **`data.cleaned` sale al menos una vez, no exactamente una.** La marca anota si el evento salió (`eventPublished`). Si el agente se cae entre guardar `done` y publicar, al arrancar ve `done` sin publicar y publica. Si la limpieza se repite tras una caída, también vuelve a publicar. **El `recommender` tiene que tolerar un evento repetido**: hoy lo cumple, porque cada `data.cleaned` recalcula todo desde la base. El mensaje es JSON con la hora de fin: `{"finishedAt": "2026-11-20T20:23:33.962000"}`.
+- **Si la limpieza falla** (por ejemplo, se cae Mongo mientras escribe), el proceso termina con código 1, Docker lo reinicia y la limpieza se repite desde el crudo. Comprobado deteniendo Mongo en plena limpieza.
+
 ## 8. Pendientes
 
 ### Para el grupo
 
 1. **¿Qué campos de `movies` usan la ficha y el recomendador?** Define cuánto invertir en cada campo. Por ejemplo, `tomatoes` (A26, A27) hoy no se corrige porque no se sabe si se usa.
-2. **`mergedInto` en las copias fusionadas:** propuesta para que las copias de películas que van a soft delete guarden el `_id` de la ganadora. El `cleaning-agent` ya tiene ese dato. Sirve para redirigir reseñas que lleguen después con un id viejo y para explicar la fusión en la auditoría.
+2. ~~**`mergedInto` en las copias fusionadas.**~~ Resuelto (2026-11-20): se incluye en el contrato (sección 7).
 3. **Promedio de estrellas vs. contador de reseñas (A16):** el promedio incluye los votos de reseñas con comentario oculto y el contador no, así que pueden no coincidir ("★ 4.2 (8 reseñas)" calculado con 10 votos). Hay que decidir si se muestran votos y reseñas por separado o si se documenta.
-4. **Sugerencia, no es parte del contrato: medir cuánto tarda la limpieza completa.** El profesor tiene que poder probar la app en unos 10 minutos desde cero. El recomendador tarda ≈6 minutos en embeber los plots y lo hace en paralelo con la limpieza (recomendador, 4.4), así que sirve saber cuál de los dos termina último.
+4. **Sugerencia, no es parte del contrato: medir cuánto tarda la limpieza completa.** El profesor tiene que poder probar la app en unos 10 minutos desde cero. El recomendador tarda ≈6 minutos en embeber los plots y lo hace en paralelo con la limpieza (recomendador, 4.4), así que sirve saber cuál de los dos termina último. **Medición parcial (2026-11-20):** las reglas sin LLM tardan ≈4 s sobre todo el dataset, en memoria, y **≈12 s contra Mongo desde cero** (copia cruda, lectura, limpieza y escritura de documentos y auditoría). Falta medir la inferencia con el LLM (≈1.900 llamadas), que va a ser la parte lenta.
+5. **Revisar los nombres nuevos que leen el `backend` y el `recommender`:** la marca en `cleaning` (`_id: "state"`, campo `status`), la auditoría en `audit` y el mensaje de `data.cleaned` (sección 7, cambios del 2026-11-20).
 
 ### Para la cátedra
 
@@ -284,3 +319,4 @@ Confirmadas por el grupo al revisar el contrato desde el recomendador ([docs/rec
 - **`circa` frente a una fecha exacta del mismo año (B13):** no se puede saber cuál es posterior. Hoy no hay casos.
 - **Pósters (A24):** el ≈12 % de imágenes rotas es una estimación por muestra, y la cifra cambia con el tiempo.
 - **`released`, `tomatoes.dvd` y `tomatoes.critic`** se conservan como vienen aunque tengan valores dudosos.
+- **`tomatoes` de dos copias (A5):** en 2 películas fusionadas por A4, `tomatoes` combina subcampos de dos registros distintos (ver sección 7, cambios del 2026-11-20).
