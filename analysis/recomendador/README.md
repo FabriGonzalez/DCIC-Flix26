@@ -10,6 +10,7 @@ Scripts que respaldan los números de [docs/recomendador.md](../../docs/recomend
 | `votos_sin_gustos.py` | 6.1 | Prueba de dejar una afuera, con votos tal cual y corregidos por calidad | Sí |
 | `vecinos_precalculados.py` | 7.1 | Tiempo por petición: contra todo el catálogo vs. vecinos precalculados | Sí |
 | `pesos.py` | 4.1, 4.3, 6.3 | Calibración, pesos, `β` y `λ` con la prueba de conjuntos escondidos | Sí |
+| `comparar_servicio.py` | 9 | Corre el código del `recommender` con la misma prueba que `pesos.py` y compara: calibración, `WR`, recall@20 y tiempo por petición. Deja `plots.npy` armado desde la caché del servicio | Sí, la `plots.npz` del contenedor |
 
 En una PC con Windows y 4 CPUs, `embeber.py` tarda ≈ 6 min y `pesos.py` ≈ 1,5 min.
 

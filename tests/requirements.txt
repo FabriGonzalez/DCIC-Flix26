@@ -1,1 +1,4 @@
 pytest==8.3.5
+# Tests unitarios del recommender (services/recommender/tests).
+numpy==2.5.5
+scipy==1.18.1
