@@ -10,22 +10,26 @@ latido (D13) y aplica la política ante fallas (D14):
     (restart: unless-stopped lo vuelve a levantar)
 
 El hilo principal es el único que toca la conexión de pika (no es thread-safe) y la
-atiende con process_data_events, que además mantiene el heartbeat AMQP. Si en el futuro
-un worker hace trabajo largo, tiene que atender la conexión entre partes del trabajo o
-hacerlo en otro hilo: con más de 30 s sin atenderla, el broker la corta.
+atiende con process_data_events, que además mantiene el heartbeat AMQP. Con más de 30 s
+sin atenderla, el broker la corta. Por eso un servicio con trabajo largo lo hace en otro
+hilo y engancha un `setup` (ver `run`): el hilo principal sigue atendiendo la conexión
+y, en cada vuelta, llama al `tick` del servicio, que es quien usa la conexión.
 """
 
 import logging
 import signal
 import sys
 import time
+from collections.abc import Callable
 
 import pika
 from pika.exceptions import AMQPError, AMQPConnectionError
+from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
 from dcicflix_common import health
 from dcicflix_common.config import ConfigError, MongoSettings, RabbitSettings
+from dcicflix_common.errors import BackgroundTaskError
 from dcicflix_common.sync import mongo, rabbit
 from dcicflix_common.sync.heartbeat import INTERVAL, Heartbeat, HealthState
 
@@ -35,9 +39,18 @@ log = logging.getLogger(__name__)
 _REPORTED = ("rabbitmq", "topology")
 _TOPOLOGY_CHECK_INTERVAL = INTERVAL
 
+# Se llama en el hilo principal en cada vuelta (~1 s), con la conexión abierta.
+Tick = Callable[[pika.BlockingConnection], None]
+# Se llama una vez, con Mongo listo; arranca el trabajo del servicio y devuelve su tick.
+Setup = Callable[[MongoClient], Tick]
 
-def run(service: str) -> None:
-    """Corre el worker hasta que algo irrecuperable lo termine."""
+
+def run(service: str, setup: Setup | None = None) -> None:
+    """Corre el worker hasta que algo irrecuperable lo termine.
+
+    setup: trabajo propio del servicio (por ejemplo, la limpieza). Sin setup, el worker
+    solo se mantiene conectado.
+    """
     mongo_settings = MongoSettings.from_env()
     rabbit_settings = RabbitSettings.from_env()
 
@@ -48,11 +61,12 @@ def run(service: str) -> None:
     # Esperar a Mongo al arrancar sirve para detectar credenciales rechazadas, que son
     # irrecuperables. Después, una caída de Mongo solo la informa el latido.
     mongo.wait_until_ready(mongo_client)
+    tick = setup(mongo_client) if setup else None
 
     while True:
         connection = rabbit.connect(rabbit_settings, name=service)
         try:
-            _serve(connection, state)
+            _serve(connection, state, tick)
         except AMQPConnectionError as exc:
             # Se cortó la conexión (broker detenido, red, heartbeat AMQP vencido): recuperable.
             log.warning("se perdió la conexión con RabbitMQ (%s: %s); reconectando", type(exc).__name__, exc)
@@ -62,7 +76,7 @@ def run(service: str) -> None:
             _close_quietly(connection)
 
 
-def _serve(connection: pika.BlockingConnection, state: HealthState) -> None:
+def _serve(connection: pika.BlockingConnection, state: HealthState, tick: Tick | None = None) -> None:
     """Atiende la conexión y verifica la topología cada 10 s, hasta que se corte."""
     next_topology_check = 0.0
     while True:
@@ -74,6 +88,8 @@ def _serve(connection: pika.BlockingConnection, state: HealthState) -> None:
         # Atiende el socket hasta 1 s: heartbeat AMQP, y en el futuro, los mensajes.
         # Si la conexión se cortó, lanza AMQPConnectionError.
         connection.process_data_events(time_limit=1)
+        if tick:
+            tick(connection)
 
 
 def _close_quietly(connection: pika.BlockingConnection) -> None:
@@ -90,11 +106,11 @@ def _exit_on_sigterm(signum, frame) -> None:
     raise SystemExit(0)
 
 
-def main(service: str) -> None:
+def main(service: str, setup: Setup | None = None) -> None:
     """Punto de entrada de los workers: corre el bucle y traduce lo irrecuperable a código 1."""
     signal.signal(signal.SIGTERM, _exit_on_sigterm)
     try:
-        run(service)
-    except (ConfigError, AMQPError, PyMongoError, rabbit.TopologyError, OSError) as exc:
+        run(service, setup)
+    except (ConfigError, AMQPError, PyMongoError, rabbit.TopologyError, BackgroundTaskError, OSError) as exc:
         logging.getLogger(service).error("error irrecuperable, termino: %s: %s", type(exc).__name__, exc)
         sys.exit(1)

@@ -167,3 +167,9 @@ def test_missingRuntimeBecomesNullWithoutChange():
     doc, changes = cleanMovie(_movie())
     assert doc["runtime"] is None
     assert not [c for c in changes if c.field == "runtime"]
+
+
+def test_lastUpdatedBecomesDateWithoutChange():
+    doc, changes = cleanMovie(_movie())
+    assert doc["lastupdated"] == datetime(2015, 8, 30, 23, 27, 11, 263000)
+    assert not [c for c in changes if c.field == "lastupdated"]

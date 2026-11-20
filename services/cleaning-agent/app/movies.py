@@ -214,7 +214,10 @@ def cleanMovie(raw: dict) -> tuple[dict, list[Change]]:
         apply(field, "A18", lambda v: dropExactDuplicates(v) if isinstance(v, list) else v)
 
     apply("rated", "A20", lambda r: normalizeRated(r) if isinstance(r, str) else r)
-    apply("lastupdated", "A21", parseLastUpdated)
+    # A21 no va a la auditoría: el texto viene en todas las películas, así que convertirlo
+    # es preparar el formato, no corregir una anomalía. El original queda en moviesRaw.
+    if "lastupdated" in doc:
+        doc["lastupdated"] = parseLastUpdated(doc["lastupdated"])
     apply("poster", "A23", lambda p: fixPosterHost(p) if isinstance(p, str) else p)
     _recalculateAwards(doc, changes)
 

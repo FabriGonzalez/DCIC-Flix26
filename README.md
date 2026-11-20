@@ -133,7 +133,7 @@ El estado que ve el `frontend` se arma a partir de dos fuentes con distinta natu
 
 | Fuente | Dónde vive | Valores | Naturaleza |
 | :--- | :--- | :--- | :--- |
-| Marca de limpieza | MongoDB (persiste en el volumen) | `pending`, `running`, `done` | Duradera: sobrevive a reinicios. |
+| Marca de limpieza | MongoDB, colección `cleaning`, documento `_id: "state"`, campo `status` (persiste en el volumen) | `pending` (o sin documento), `running`, `done` | Duradera: sobrevive a reinicios. |
 | Salud del recomendador | `GET /health` de `recommender` | listo o no | Del proceso: se recalcula en cada arranque. |
 
 El `backend` las combina en `GET /status`:
@@ -169,6 +169,14 @@ El `frontend` consulta `GET /status` cada pocos segundos mientras el estado no s
 
 La caída de `recommender` o de `backend` se recupera por este mismo camino, con `restart: unless-stopped`. `recommender` se suscribe a la cola antes de leer la marca, para no perder la señal si la limpieza termina entre ambos pasos.
 
+### Caída de `cleaning-agent` a mitad de la limpieza
+
+1. Antes de escribir nada, `cleaning-agent` copia `movies` y `reviews` a `moviesRaw` y `reviewsRaw`, y cada corrida lee de esa copia.
+2. Si se cae (o falla al escribir), termina con código 1 y `restart: unless-stopped` lo levanta. Encuentra la marca en `running` y **repite la limpieza completa** desde la copia: los documentos y la auditoría se reemplazan por `_id`, sin duplicarse.
+3. Si se cae entre guardar `done` y publicar `data.cleaned`, la marca lo indica (`eventPublished: false`) y publica al arrancar. El evento puede llegar repetido, nunca perderse: el `recommender` lo tolera porque reindexa desde la base.
+
+El detalle y las alternativas descartadas están en [ANOMALIAS.md](analysis/ANOMALIAS.md), sección 7.
+
 ### Voto con reseña
 
 1. El `frontend` envía usuario, película, estrellas y texto al `backend`.
@@ -194,7 +202,6 @@ Decisiones abiertas:
 - **LLM:** se asume API externa con API key, a confirmar con la cátedra. Si pasa a ser un modelo local, se agrega un contenedor `ollama` y se elimina `egress-net`.
 - **Algoritmo del recomendador:** la estrategia está decidida y la especificación para implementarlo está en [docs/recomendador.md](docs/recomendador.md), sección 9. Los embeddings se guardan en un volumen para que el segundo arranque no los recalcule.
 - **Lectura de datos sucios:** cómo tolera el `backend` los formatos corruptos mientras dura la limpieza.
-- **Caída de `cleaning-agent` a mitad de la limpieza:** el proceso debe poder repetirse o retomarse sin duplicar la auditoría.
 - **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
 
 Secciones a completar con la implementación:
