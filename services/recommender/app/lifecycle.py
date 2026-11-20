@@ -66,7 +66,7 @@ class Index:
 class Recommender:
     def __init__(self, data: DataService, *, on_fatal: Callable[[BaseException], None]):
         self._data = data
-        self._db = data.mongo.get_default_database()
+        self.db = data.mongo.get_default_database()
         self._on_fatal = on_fatal
         self._stop = threading.Event()  # para los hilos: las tareas se cancelan, los hilos no
         self.embeddings = PlotEmbeddings(CACHE_DIR, stop=self._stop)
@@ -126,7 +126,7 @@ class Recommender:
     async def _embed_plots(self) -> None:
         await asyncio.to_thread(self.embeddings.load)
         await aio_mongo.wait_until_ready(self._data.mongo)
-        plots = await self._retry("los plots", lambda: store.read_all_plots(self._db))
+        plots = await self._retry("los plots", lambda: store.read_all_plots(self.db))
         texts = [plot for plot in plots if _is_text(plot)]
         log.info("leídos %d plots de MongoDB", len(texts))
         added = await asyncio.to_thread(self.embeddings.embed_missing, texts)
@@ -145,7 +145,7 @@ class Recommender:
         await queue.consume(self._on_data_cleaned)
         log.info("suscripto a %s", queue.name)
 
-        state = await self._retry("la marca de limpieza", lambda: store.read_flag(self._db))
+        state = await self._retry("la marca de limpieza", lambda: store.read_flag(self.db))
         if state == cleaning.DONE:
             self._request_index("marca de limpieza done")
         elif state in cleaning.STATES or state is None:
@@ -181,7 +181,7 @@ class Recommender:
 
     async def _build_index(self) -> None:
         started = time.monotonic()
-        movies = await self._retry("las películas activas", lambda: store.read_movies(self._db))
+        movies = await self._retry("las películas activas", lambda: store.read_movies(self.db))
         if not movies:
             log.warning("no hay películas con deleted: false; no indexo y espero otro data.cleaned")
             return
@@ -191,7 +191,7 @@ class Recommender:
         t_read = time.monotonic()
         catalog = await asyncio.to_thread(build_catalog, movies, vectors)
         t_catalog = time.monotonic()
-        votes = await self._retry("los votos", lambda: store.read_vote_totals(self._db, catalog))
+        votes = await self._retry("los votos", lambda: store.read_vote_totals(self.db, catalog))
         quality = await asyncio.to_thread(build_quality, catalog, votes.counts, votes.sums)
         self.index = Index(catalog, quality)
         done = time.monotonic()
@@ -221,7 +221,7 @@ class Recommender:
             if index is None:
                 continue
             try:
-                votes = await store.read_vote_totals(self._db, index.catalog)
+                votes = await store.read_vote_totals(self.db, index.catalog)
             except PyMongoError as exc:
                 log.warning("no pude recalcular el WR (%s); sigo con el anterior", type(exc).__name__)
                 continue

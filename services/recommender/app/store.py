@@ -56,6 +56,22 @@ async def read_movies(db: AsyncDatabase) -> list[dict]:
     return [doc async for doc in db.movies.find({"deleted": False}, MOVIE_FIELDS)]
 
 
+async def read_user_votes(db: AsyncDatabase, user_id: str, catalog: Catalog) -> list[tuple[int, int]]:
+    """(fila, estrellas) de los votos activos del usuario, sobre películas del catálogo (9.3, paso 1).
+
+    Usa el índice por user_id (dataset/mongo-init.sh). Los votos a películas que no están
+    en el catálogo se ignoran. Si hubiera dos votos a la misma película queda uno: la
+    limpieza no los deja (B13), pero así un duplicado no cuenta doble.
+    """
+    query = {"user_id": user_id, "deleted": False, "rating": {"$in": [1, 2, 3, 4, 5]}}
+    votes: dict[int, int] = {}
+    async for doc in db.reviews.find(query, {"_id": 0, "movie_id": 1, "rating": 1}):
+        row = catalog.rows.get(str(doc["movie_id"]))
+        if row is not None:
+            votes[row] = int(doc["rating"])
+    return list(votes.items())
+
+
 async def read_vote_totals(db: AsyncDatabase, catalog: Catalog) -> VoteTotals:
     """Cantidad y suma de los votos activos de cada película del catálogo.
 
