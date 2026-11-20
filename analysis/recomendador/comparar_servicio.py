@@ -97,7 +97,7 @@ t_calidad = time.time() - t
 a, b = quality.q5
 print(f"WR: C {quality.mean_vote:.3f}, Q₅ = {a:.2f}·Q + {b:.2f}, media {quality.wr.mean():.2f}, "
       f"desvío {quality.wr.std():.2f} | {quality.votes} votos | {t_calidad * 1000:.0f} ms   "
-      f"(doc: C 3,525, Q₅ = 0,48·Q + 0,18, media 3,41, desvío 0,37)")
+      f"(doc: C 3,525, Q₅ = 0,53·Q − 0,18, media 3,41, desvío 0,37)")
 
 # --- Conjuntos escondidos: el código de pesos.py, sin cambios ---
 rng = random.Random(2026)

@@ -1,6 +1,6 @@
 # Motor de recomendaciones
 
-> **Estado: estrategia decidida, sin implementar (2026-11-20).** Este documento registra las decisiones sobre el algoritmo del `recommender` y por qué se descartaron las alternativas. La sección 9 junta lo necesario para implementarlo. Los números se midieron sobre el dataset **sin limpiar** con los scripts de [analysis/recomendador](../analysis/recomendador/). Hay que recalcularlos sobre la base limpia, aunque no deberían cambiar mucho.
+> **Estado: implementado en [services/recommender](../services/recommender/) (2026-11-20).** Este documento registra las decisiones sobre el algoritmo del `recommender` y por qué se descartaron las alternativas. La sección 9 junta lo necesario para implementarlo, y 9.6 describe la implementación y lo medido en los contenedores. Los números de las secciones 2 a 7 se midieron sobre el dataset **sin limpiar** con los scripts de [analysis/recomendador](../analysis/recomendador/). Los que calcula el servicio sobre la base limpia coinciden (9.6); falta recalcular el resto (pendiente 7).
 
 El `recommender` sirve dos cosas al `backend`:
 
@@ -136,20 +136,20 @@ Medido en el crudo:
    Q = (V·imdb.rating + M·6,67) / (V + M)
    ```
    `V` = `imdb.votes`; 6,67 = promedio de IMDb en el catálogo; `M` en los miles (con la mediana, ≈ 3.000).
-2. **Pasar a la escala 1–5** con una regresión de los votos sobre `Q`: `Q₅ = a·Q + b`. En el crudo da `Q₅ = 0,48·Q + 0,18`, y se recalcula al indexar (3.4).
+2. **Pasar a la escala 1–5** con una regresión de los votos sobre `Q`: `Q₅ = a·Q + b`. Con `M = 3.000`, en la base limpia da `Q₅ = 0,53·Q − 0,17`, y se recalcula al indexar (3.4).
 3. **Votos propios sobre IMDb**, la fórmula de 3.1 con `Q₅` en lugar de `C`:
    ```
    WR = (v·R + m·Q₅) / (v + m)
    ```
    Si la película no tiene IMDb (137 en el crudo), se usa `C`.
 
-Ejemplos con los valores decididos, `M = 3.000` y `m = 5` (3.4):
+Ejemplos con los valores decididos, `M = 3.000` y `m = 5` (3.4), y el `Q₅` de la base limpia:
 
 | Película | IMDb | Votos propios | `Q₅` | `WR` | Efecto |
 | :-- | :-- | :-- | --: | --: | :-- |
-| X | 8,5 con 500.000 votos | ninguno | 4,25 | 4,25 | Sin votos propios queda arriba; con 3.1 sola quedaría empatada en `C` |
-| Y | 9,0 con 40 votos | ninguno | 3,40 | 3,40 | Con pocos votos en IMDb, casi no se le cree el 9 |
-| Z | 7,0 con 20.000 votos | 10, promedio 4,8 | 3,52 | 4,37 | Los votos propios la suben |
+| X | 8,5 con 500.000 votos | ninguno | 4,36 | 4,36 | Sin votos propios queda arriba; con 3.1 sola quedaría empatada en `C` |
+| Y | 9,0 con 40 votos | ninguno | 3,41 | 3,41 | Con pocos votos en IMDb, casi no se le cree el 9 |
+| Z | 7,0 con 20.000 votos | 10, promedio 4,8 | 3,54 | 4,38 | Los votos propios la suben |
 
 El mismo `WR` es el que usa el piso de calidad `β·WR` de las recomendaciones personalizadas (4.3).
 
@@ -185,7 +185,8 @@ El mismo `WR` es el que usa el piso de calidad `β·WR` de las recomendaciones p
 
 - **`m = 5` (medido):** es el mejor con cualquier `M`. Con 5 votos propios, la película pesa mitad lo propio y mitad IMDb. Combinar las dos fuentes le gana a usar cualquiera sola, y eso confirma R4.
 - **`M = 3.000` (por criterio):** el menor error es con `M = 0`, pero la diferencia contra 3.000 es del 0,7 %. Lo que sí cambia es la portada. Con `M = 0`, el top 10 incluye *The Real Miyagi* (9,3 con 41 votos en IMDb) y *A Brave Heart* (9,4 con 45) al lado de *The Godfather*. Con `M = 3.000` salen, y entran *The Decalogue*, *Pride and Prejudice* y *Cosmos*. El dataset prefiere `M = 0` porque los usuarios sintéticos parecen haber seguido a `imdb.rating` sin importar cuántos votos tenía (6.1), así que no sirve para decidir `M`. 3.000 es aproximadamente la mediana de `imdb.votes`.
-- **El pasaje a 1–5 se recalcula al indexar:** es una regresión de los votos activos sobre `Q`, en cada `data.cleaned`, en lugar de números fijos en el código. En el crudo da `0,48·Q + 0,18`.
+- **El pasaje a 1–5 se recalcula al indexar:** es una regresión de los votos activos sobre `Q`, en cada `data.cleaned`, en lugar de números fijos en el código. Con `M = 3.000` da `0,53·Q − 0,17` en la base limpia (9.6) y `0,53·Q − 0,18` en el crudo, con una copia por `imdb.id`.
+  - **Corrección (P2 de la implementación):** antes decía `0,48·Q + 0,18`. Es el mapeo del mejor punto de la grilla (`M = 0`), calculado con la mitad de los votos, que es lo que imprime `m_y_M.py`. Los ejemplos de 3.3 estaban hechos con ese mapeo y se recalcularon.
 
 Reemplaza el análisis de 3.2 (`m` entre 5 y 15), que usaba `C` como punto de partida. Los números se recalculan sobre la base limpia.
 
@@ -651,9 +652,9 @@ Todo el cálculo pesado corre fuera del event loop (`run_in_executor`), para que
 
 **Rankings:** se leen los ya calculados, porque no dependen del usuario.
 
-### 9.4 · API para el `backend` (borrador, a acordar con el grupo)
+### 9.4 · API para el `backend` (implementada; la forma sigue a acordar con el grupo)
 
-El `backend` le pide al `recommender` solo identificadores (README, "Recomendaciones") y completa la ficha desde MongoDB. Todo es HTTP interno en el puerto 8000.
+El `backend` le pide al `recommender` solo identificadores (README, "Recomendaciones") y completa la ficha desde MongoDB. Todo es HTTP interno en el puerto 8000: el `recommender` está solo en `internal-net`, sin puerto publicado, así que el `frontend` no lo alcanza. Está en [services/recommender/app/api.py](../services/recommender/app/api.py).
 
 | Endpoint | Parámetros | Respuesta |
 | :-- | :-- | :-- |
@@ -663,8 +664,10 @@ El `backend` le pide al `recommender` solo identificadores (README, "Recomendaci
 | `GET /genres` | — | `{"items": [{"genre", "movies"}]}`: los géneros con su cantidad de películas activas, para las filas y el onboarding |
 | `GET /health` | — | El de siempre, con `ready` (esqueleto) |
 
-- **Sin terminar de indexar**, los cuatro primeros responden **503**. El `backend` ya distingue ese estado por `GET /status` (`indexing`).
-- **`movie_id`** es el `_id` de la película como string hexadecimal.
+- **Sin terminar de indexar**, los cuatro primeros responden **503** con `{"detail", "phase"}` y `Retry-After: 5`. `phase` es `embedding`, `waiting-cleaning` o `indexing`. El `backend` ya distingue ese estado por `GET /status` (`indexing`). Al reindexar no hay 503: se responde con el índice anterior.
+- **Sin MongoDB**, solo `/users/{id}/recommendations` responde 503 (`"MongoDB no disponible"`), después de ≈ 3 s de espera, el `serverSelectionTimeoutMS` del helper común. Las demás rutas leen solo de memoria y siguen respondiendo.
+- **`limit`** fuera de 1–100, o que no es un número: **422**, la validación de FastAPI.
+- **`movie_id`** es el `_id` de la película como string hexadecimal. Una copia fusionada como duplicada da 404: el `backend` puede seguir su `mergedInto`.
 - **`because`** sirve para mostrar en la interfaz "porque te gustó…".
 - **Usuario sin votos:** `/users/{id}/recommendations` responde el ranking global (`source: "ranking"`). La fila "Para vos" del onboarding la arma el `backend` con `/rankings?genre=…` (3.5).
 - **El onboarding usa 22 géneros:** el `backend` saca de `/genres` los que no se ofrecen (Talk-Show, News, Short).
@@ -675,6 +678,73 @@ El `backend` le pide al `recommender` solo identificadores (README, "Recomendaci
 - **Dependencias:** `fastembed`, `numpy` y `scipy`. Las versiones con las que se midió están en [analysis/recomendador/requirements.txt](../analysis/recomendador/requirements.txt).
 - **Evaluación:** los scripts de [analysis/recomendador](../analysis/recomendador/) reproducen cada número de este documento. Con la base limpia hay que correr de nuevo `pesos.py` y `m_y_M.py`, leyendo de MongoDB en vez de los `.json.gz` (pendiente 7).
 
+### 9.6 · Implementación (2026-11-20)
+
+El código está en [services/recommender/app](../services/recommender/app/):
+
+| Módulo | Qué hace |
+| :-- | :-- |
+| `model.py` | El modelo de embeddings. Se descarga en el `RUN` del Dockerfile y se carga sin red |
+| `embeddings.py` | La caché de vectores por hash del plot, en el volumen `recommender-cache` |
+| `index.py` | Pasos 3 a 6 de 9.2: señales, calibración, vecinos y `WR`. Funciones puras |
+| `recommend.py` | 9.3: "para vos", similares y rankings. Funciones puras |
+| `store.py` | Las lecturas de MongoDB. Los votos se agregan en Mongo, con una fila por película |
+| `lifecycle.py` | Las tareas de fondo: embeber, esperar la limpieza, indexar y recalcular el `WR` cada 60 s |
+| `api.py` | Las rutas de 9.4 |
+
+**Ciclo de vida:**
+- **Arranque:**
+  - El `recommender` se suscribe a `recommender.data-cleaned` **antes** de leer la marca de limpieza.
+  - Indexa cuando se cumplen dos condiciones: los embeddings terminaron, y la marca dice `done` o llega un mensaje.
+- **Mensajes repetidos:** se juntan en un indexado, o en uno más si llegan mientras indexa.
+- **El mensaje es solo un aviso:** se confirma al llegar y no se lee su contenido. Lo que vale es la marca.
+- **La marca** es la que escribe el `cleaning-agent`: `{_id: "state", status}` en la colección `cleaning`. Sus nombres están en [libs/common/dcicflix_common/cleaning.py](../libs/common/dcicflix_common/cleaning.py).
+- **`/health`** agrega `ready`, que significa "hay índice", `phase`, `movies` y `votes`. Las fases son:
+
+  ```
+  embedding → waiting-cleaning → indexing → ready      (al reindexar: ready + indexing)
+  ```
+
+**Medido en Docker** (Windows, Docker Desktop, 4 CPUs):
+
+| Qué | Valor |
+| :-- | :-- |
+| Imagen | 694 MB, con el modelo adentro; el build tarda ≈ 160 s |
+| Primer embedding, con el volumen vacío | 448–477 s para 19.135 plots distintos de 19.842 (en el host, 4.4: 376 s) |
+| Arranque con la caché completa | 0 plots embebidos; los embeddings están listos en < 1 s |
+| Indexado sobre la base limpia | 16–19 s, casi todo en armar el catálogo: vecinos y calibración. Hasta ≈ 44 s cuando la PC estaba ocupada con otras pruebas |
+| Memoria | 181 MiB sin índice y 354 MiB con índice. El modelo se carga solo mientras embebe: cargado ocupa 1,28 GiB |
+| `/health` mientras embebe o indexa | 3–148 ms |
+| "Para vos", 300 usuarios, desde el `backend`: red, Mongo y cálculo | mediana 10–11 ms, p95 42–47 ms (objetivo del README: < 100 ms). Justo después de reiniciar Mongo, con su caché fría: 20,7 / 86,2 ms |
+| "Similares", 300 películas, desde el `backend` | mediana 5,4 ms, p95 36,1 ms |
+| Un voto nuevo | Cambia "para vos" en la petición siguiente; el `WR` y los rankings, en ≤ 60 s |
+
+**Contra la referencia** ([comparar_servicio.py](../analysis/recomendador/comparar_servicio.py), que corre `index.py` y `recommend.py` sobre el crudo con los vectores del contenedor):
+- **Recall@20:** 83,7 % contra 83,5 % de `pesos.py` (6.3). `pesos.py` con esos mismos vectores da exactamente 83,5 %, así que el modelo del contenedor produce los mismos vectores que el de la medición.
+- **Calibración:** con la misma muestra da lo mismo que `pesos.py` (0,461 / 1,000 / 0,195).
+
+**Sobre la base limpia** (19.141 películas activas, 701 fusionadas):
+- 58.322 votos válidos;
+- `C = 3,527`;
+- `Q₅ = 0,53·Q − 0,17`;
+- `WR` con media 3,41 y desvío 0,37.
+
+El único valor fuera de contrato que queda son **1.884 reseñas activas con `rating: null`**: sin `LLM_API_KEY`, el `cleaning-agent` no infiere las estrellas del comentario (pendiente 10). El `recommender` las descarta como votos y las cuenta en el log.
+
+**Fallas probadas:**
+
+| Falla | Comportamiento |
+| :-- | :-- |
+| `stop` a mitad del embedding | Termina el lote en curso, guarda y sale en ≈ 1 s. Al volver, retoma desde lo guardado |
+| `stop` a mitad del indexado | El hilo que arma el catálogo no se puede cortar, y el proceso espera a que termine. En esta PC Docker manda SIGKILL ≈ 3 s después del SIGTERM, así que el contenedor sale con 137. Con `-t 30` sale con 0 a los ≈ 11 s. No se pierde nada, porque el indexado no escribe nada duradero, y al volver indexa de nuevo |
+| Se cae RabbitMQ | `/health` da 503 hasta que vuelve, pero la API sigue respondiendo desde la memoria. aio-pika restaura la cola y el consumidor: un `data.cleaned` posterior reindexa |
+| Se cae MongoDB con el índice listo | "Para vos" da 503 a los ≈ 3 s; el resto sigue respondiendo. El recálculo del `WR` conserva el anterior. Al volver Mongo se recupera solo |
+| Se cae MongoDB durante un indexado | La lectura reintenta cada ≈ 8 s (3 s del timeout más 5 s de espera) y el indexado termina ≈ 3 s después de que vuelve Mongo. Mientras tanto responde el índice anterior |
+
+**Bugs encontrados:**
+- **Hashes recortados:** numpy recortaba los `\x00` del final de los hashes guardados como `S32`, y 1 de cada 256 hashes SHA-256 termina en `\x00`. Por eso 78 plots se volvían a embeber en cada arranque. Ahora se guardan como una matriz `uint8` de n × 32, y al cargar se valida el formato.
+- **Calibración de `pesos.py`:** toma `-np.partition(-x, 10)[:, 9]`, que no es exactamente el 10.º valor más alto. Con el exacto, la escala de personas da 0,193 en vez de 0,195. El servicio usa el exacto, y la diferencia no cambia los resultados.
+
 ## 10. Pendientes
 
 1. ~~Combinación con IMDb (R4)~~: decidida en 3.3.
@@ -683,6 +753,7 @@ El `backend` le pide al `recommender` solo identificadores (README, "Recomendaci
 4. ~~Embeber en paralelo con la limpieza (R17)~~: decidido. Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. ~~Vecinos precalculados o producto por petición (R15)~~: vecinos precalculados, en 7.1. El `WR` se recalcula cada 60 s (R18, 7.2).
 6. ~~Calibración y pesos (R9), `β` y `λ` (R19)~~: decididos en 4.1, 4.3 y 6.3.
-7. Recalcular sobre la base limpia los números de la sección 2, `m` y `M` (3.4) y la prueba de conjuntos escondidos (6.3). No deberían moverse mucho; si se mueven, se revisan los valores.
+7. Recalcular sobre la base limpia los números de la sección 2, `m` y `M` (3.4) y la prueba de conjuntos escondidos (6.3). No deberían moverse mucho; si se mueven, se revisan los valores. **Avance:** lo que calcula el servicio al indexar ya está medido sobre la base limpia, y coincide con el crudo (9.6): `C`, `Q₅` y la media y el desvío del `WR`. Faltan los scripts, que siguen leyendo los `.json.gz`.
 8. ~~Guardar los vectores en un volumen~~: decidido en 4.4, solo los embeddings.
-9. Acordar con el grupo la API de 9.4 (`backend`) y las pantallas del onboarding (`frontend`).
+9. Acordar con el grupo la API de 9.4 (`backend`) y las pantallas del onboarding (`frontend`). La API ya está implementada como la describe 9.4.
+10. **`rating: null` sin LLM:** el contrato de ANOMALIAS dice que `reviews.rating` es un `int` de 1 a 5, pero sin `LLM_API_KEY` quedan 1.884 reseñas activas con `null`. Hay que acordar con el `cleaning-agent` si el contrato admite `null` en ese caso. El `recommender` ya las descarta, así que no necesita cambios.
