@@ -1,6 +1,6 @@
 # Motor de recomendaciones
 
-> **Estado: estrategia en discusión, sin implementar (2026-11-19).** Este documento registra las decisiones tomadas sobre el algoritmo del `recommender`, las que faltan y por qué se descartaron las alternativas. Los números se midieron sobre el dataset **sin limpiar**. Hay que recalcularlos sobre la base limpia, aunque no deberían cambiar mucho.
+> **Estado: estrategia decidida, sin implementar (2026-11-20).** Este documento registra las decisiones sobre el algoritmo del `recommender` y por qué se descartaron las alternativas. La sección 9 junta lo necesario para implementarlo. Los números se midieron sobre el dataset **sin limpiar** con los scripts de [analysis/recomendador](../analysis/recomendador/). Hay que recalcularlos sobre la base limpia, aunque no deberían cambiar mucho.
 
 El `recommender` sirve dos cosas al `backend`:
 
@@ -26,7 +26,7 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R8 | Usuario con votos | Por contenido, con tres señales: plot, géneros y personas | decidida |
 | R9 | Pesos de las tres señales | Cada señal se calibra por su 10.º vecino típico; pesos plot 0,2 · géneros 0,4 · personas 0,4, elegidos con la prueba de conjuntos escondidos y con un mínimo para el plot (ver 6.3) | decidida |
 | R16 | Señal faltante en una película | Pesos fijos: el término vale 0 y no se redistribuye | decidida |
-| R10 | Perfil del usuario | Suma de vectores ponderada por `estrellas − punto medio`, con `k = 5` para el punto medio | propuesta (`k` decidido) |
+| R10 | Perfil del usuario | Cada voto pesa `estrellas − punto medio`, con `k = 5` para el punto medio, y se aplica sobre los vecinos precalculados (ver 4.2) | decidida |
 | R11 | Filtrado colaborativo | No se usa: no hay votos suficientes | descartada |
 | R12 | Híbrido contenido + colaborativo | No aplica, por R11 | descartada |
 | R13 | Evaluación | Calidad: con los votos del dataset. Gustos: prueba automática de conjuntos escondidos, sin intervención humana | decidida |
@@ -108,7 +108,7 @@ IMDb elige `m` como un percentil de la cantidad de votos por película: así sal
 | 17 (percentil 90) | Compiten prácticamente solo las ~1.300 muy votadas. Lista confiable, pero siempre la misma. |
 | 5 | Entran también las de 5 a 9 votos (~3.000 en total). Más variedad, algo más de ruido. |
 
-**Propuesta:** entre 5 y 15. El valor final se elige con la evaluación (R13).
+**Reemplazado por 3.4:** este análisis usaba `C` como punto de partida. Con IMDb como punto de partida (R4), se midió `m = 5`.
 
 ### 3.3 · Combinación con IMDb (R4)
 
@@ -136,20 +136,20 @@ Medido en el crudo:
    Q = (V·imdb.rating + M·6,67) / (V + M)
    ```
    `V` = `imdb.votes`; 6,67 = promedio de IMDb en el catálogo; `M` en los miles (con la mediana, ≈ 3.000).
-2. **Pasar a la escala 1–5** con la relación medida en los votos: `Q₅ = 0,49·Q + 0,14`.
+2. **Pasar a la escala 1–5** con una regresión de los votos sobre `Q`: `Q₅ = a·Q + b`. En el crudo da `Q₅ = 0,48·Q + 0,18`, y se recalcula al indexar (3.4).
 3. **Votos propios sobre IMDb**, la fórmula de 3.1 con `Q₅` en lugar de `C`:
    ```
    WR = (v·R + m·Q₅) / (v + m)
    ```
    Si la película no tiene IMDb (137 en el crudo), se usa `C`.
 
-Ejemplos con `M = 3.000` y `m = 10`:
+Ejemplos con los valores decididos, `M = 3.000` y `m = 5` (3.4):
 
 | Película | IMDb | Votos propios | `Q₅` | `WR` | Efecto |
 | :-- | :-- | :-- | --: | --: | :-- |
-| X | 8,5 con 500.000 votos | ninguno | 4,31 | 4,31 | Sin votos propios queda arriba; con 3.1 sola quedaría empatada en `C` |
-| Y | 9,0 con 40 votos | ninguno | 3,42 | 3,42 | Con pocos votos en IMDb, casi no se le cree el 9 |
-| Z | 7,0 con 20.000 votos | 10, promedio 4,8 | 3,55 | 4,18 | Los votos propios la suben |
+| X | 8,5 con 500.000 votos | ninguno | 4,25 | 4,25 | Sin votos propios queda arriba; con 3.1 sola quedaría empatada en `C` |
+| Y | 9,0 con 40 votos | ninguno | 3,40 | 3,40 | Con pocos votos en IMDb, casi no se le cree el 9 |
+| Z | 7,0 con 20.000 votos | 10, promedio 4,8 | 3,52 | 4,37 | Los votos propios la suben |
 
 El mismo `WR` es el que usa el piso de calidad `β·WR` de las recomendaciones personalizadas (4.3).
 
@@ -303,7 +303,7 @@ Alternativas descartadas:
 | Imputar el valor típico de la señal | Para personas da lo mismo que pesos fijos (el valor típico es ≈ 0) |
 | Coseno sobre el vector concatenado | Renormaliza a medias, sin control explícito |
 
-En "Películas similares a A", si a A le falta una señal, el término es igual contra todas las candidatas y el orden no cambia: la regla solo importa cuando la que no tiene la señal es la candidata. Pesos fijos también permite calcular los vecinos de cada película como un solo producto de matrices al indexar (R15). Si la evaluación (R13) mostrara que renormalizar da mejor NDCG, se revisa.
+En "Películas similares a A", si a A le falta una señal, el término es igual contra todas las candidatas y el orden no cambia: la regla solo importa cuando la que no tiene la señal es la candidata. Pesos fijos también permite calcular los vecinos de cada película como un solo producto de matrices al indexar (R15).
 
 ### 4.2 · Perfil del usuario (R10)
 
@@ -319,7 +319,7 @@ El perfil es la suma de los vectores de las películas que votó, cada uno **mul
 
 Ejemplo con vectores de 2 dimensiones `[acción, romance]`: Mad Max `(1, 0)` con 5 ★, Die Hard `(0,9, 0,1)` con 4 ★ y Titanic `(0, 1)` con 1 ★ dan `2·(1, 0) + 1·(0,9, 0,1) − 2·(0, 1) = (2,9, −1,9)`. El perfil apunta a la acción y se aleja del romance.
 
-**Punto medio:** un 3 fijo supone que todos usan la escala igual, y para quien pone 4 a casi todo, un 3 es una mala nota. Se propone usar el promedio del usuario, corregido hacia `C` como en 3.1: `(n·promedio_usuario + k·C) / (n + k)`. Sin esa corrección, un usuario nuevo con un solo voto tendría peso 0 y el perfil quedaría vacío.
+**Punto medio:** un 3 fijo supone que todos usan la escala igual, y para quien pone 4 a casi todo, un 3 es una mala nota. Se usa el promedio del usuario, corregido hacia `C` como en 3.1: `(n·promedio_usuario + k·C) / (n + k)`. Sin esa corrección, un usuario nuevo con un solo voto tendría peso 0 y el perfil quedaría vacío.
 
 **`k = 5` (decidido):** es cuántos votos hacen falta para creerle al promedio propio del usuario, y es lo que vota un profesor en los primeros minutos de la demo. Se fija por criterio, porque en el dataset los promedios por usuario van casi todos de 3,22 a 3,82 y no hay diferencias de escala para ajustarlo. Con `C = 3,525`:
 
@@ -367,7 +367,7 @@ No cambia el resultado: el vector de un plot es `f(texto)` y no depende de los d
 - Al arrancar, el `recommender` lee los `plot` crudos y los embebe sin esperar `data.cleaned`. Puede hacerlo porque la limpieza no modifica `plot`: no hay ninguna regla sobre ese campo (ANOMALIAS, sección 6).
 - **La clave es un hash del texto, no el `_id`.** Al fusionar duplicados, cada campo se toma de la copia más reciente que lo tenga válido (ANOMALIAS, A5), así que el `plot` de la ganadora puede venir de una copia perdedora. Pasa en 2 de los 651 grupos (*Little Fugitive*, *The Personals*). Como se embeben los plots de todas las copias, el plot ganador siempre está.
 - Al recibir `data.cleaned`, se busca el vector de cada película activa por el hash de su `plot`. Si no está (un plot nuevo o modificado), se embebe en el momento.
-- Los vectores se guardan en un volumen del `recommender`, para que el segundo arranque no embeba de nuevo (pendiente 7). En MongoDB no, porque el `recommender` solo lee de ahí.
+- **Los vectores se guardan en un volumen del `recommender` (decidido)**, indexados por el hash del plot, para que el segundo arranque no embeba de nuevo. En MongoDB no, porque el `recommender` solo lee de ahí. Solo se guardan los embeddings: los vecinos, el TF-IDF y el `WR` dependen de los datos limpios y se recalculan en cada indexado (≈ 15–20 s).
 - Falta medir cuánto tarda la limpieza: si tarda más que el embedding, este último queda oculto.
 
 **Alternativas descartadas:**
@@ -516,7 +516,7 @@ El enunciado de la cátedra pide que ninguna petición calcule similitudes contr
 
 | Momento | Qué se hace |
 | :-- | :-- |
-| **Al indexar** (al recibir `data.cleaned`) | Para cada película, se calcula su similitud (4.1) contra todo el catálogo y se guardan sus **100** más parecidas con el puntaje. Se guardan en el volumen, junto con los embeddings. Dependen solo del contenido: los votos nuevos no los cambian |
+| **Al indexar** (al recibir `data.cleaned`) | Para cada película, se calcula su similitud (4.1) contra todo el catálogo y se guardan en memoria sus **100** más parecidas, con el puntaje. Dependen solo del contenido: los votos nuevos no las cambian |
 | **"Recomendadas para vos"** | Se leen las listas de las películas que votó el usuario. Cada candidata suma `peso del voto × puntaje guardado` por cada lista en la que aparece. Se suma `β·WR`, se aplica MMR entre las candidatas y se devuelven las primeras |
 | **"Películas similares"** | La lista guardada de esa película, reordenada con `β·WR` y MMR |
 
@@ -562,7 +562,120 @@ Responde al pendiente 1 de ANOMALIAS ("¿Qué campos de `movies` usan la ficha y
 
 Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede necesitar otros campos.
 
-## 9. Pendientes
+## 9. Especificación para implementar
+
+Junta en un solo lugar lo decidido en las secciones anteriores, con el detalle que hace falta para programarlo. La referencia ejecutable es [analysis/recomendador/pesos.py](../analysis/recomendador/pesos.py): implementa los pasos 2 a 6 de 9.2 y la recomendación de 9.3, y sirve para comparar los resultados del servicio.
+
+### 9.1 · Parámetros
+
+| Parámetro | Valor | Dónde se decidió |
+| :-- | :-- | :-- |
+| Modelo de embeddings | `sentence-transformers/all-MiniLM-L6-v2` con `fastembed` (ONNX), 384 dimensiones | 4.4 (R14) |
+| Pesos `w₁`, `w₂`, `w₃` (plot, géneros, personas) | 0,2 · 0,4 · 0,4 | 6.3 (R9) |
+| Tope del aporte de personas, ya calibrado | 2,0 | 4.1 |
+| Calibración | Mediana del 10.º vecino de cada señal, sobre 1.000 películas al azar (semilla fija); se excluyen las que no tienen 10 vecinos con similitud > 0 | 4.1 |
+| Vecinos por película `K` | 100 | 7.1 (R15) |
+| Candidatas antes de MMR | 200 | 7.1 |
+| `m` (votos propios) | 5 | 3.4 (R5) |
+| `M` (votos de IMDb) | 3.000 | 3.4 (R5) |
+| `k` (punto medio del usuario) | 5 | 4.2 (R10) |
+| Piso de calidad `β` | 0,2, sobre el `WR` estandarizado | 4.3 (R19) |
+| MMR `λ` | 0,8 | 4.3 (R19) |
+| Candidatas positivas que no alcanzan | Se completa con el ranking global hasta llegar a `limit` | 7.1 |
+| Recálculo del `WR` | Cada 60 s | 7.2 (R18) |
+
+Los demás números (`C`, promedio de `imdb.rating`, `a` y `b` de `Q₅`, escalas de calibración, media y desvío del `WR`) **no se fijan en el código**: se calculan con los datos activos al indexar, o cada 60 s en el caso del `WR`.
+
+### 9.2 · Al arrancar y al indexar
+
+Todo el cálculo pesado corre fuera del event loop (`run_in_executor`), para que `/health` siga respondiendo (esqueleto, regla del event loop). Las estructuras nuevas reemplazan a las anteriores de una sola vez, al terminar.
+
+1. **Embeddings (al arrancar, sin esperar `data.cleaned`, R17):**
+   - Se cargan del volumen los vectores ya calculados: hash SHA-256 del texto del `plot` → vector.
+   - Se leen los `plot` de todas las películas, activas o no, y se embeben los que falten.
+   - Se guarda el volumen.
+   - El modelo viene en la imagen: se descarga en un `RUN` del Dockerfile.
+2. **Datos (al recibir `data.cleaned`, o al arrancar con la marca `done`):**
+   - Se leen las películas con `deleted: false`, con los campos de la sección 8.
+   - Se leen los votos con `deleted: false`.
+   - Si falta el vector de algún plot, se embebe en ese momento.
+3. **Señales**, una fila por película y cada fila normalizada a largo 1:
+   - **Plot:** el embedding.
+   - **Géneros:** una posición por género (1 si lo tiene). Sin géneros, una fila de ceros.
+   - **Personas:**
+     - se juntan `directors`, `cast` y `writers` (las listas que faltan cuentan como vacías);
+     - se quita el rol con `re.sub(r"\s*\(.*$", "", nombre).strip()`;
+     - se descartan los nombres que aparecen en una sola película;
+     - cada nombre pesa `log(N / df)`, donde `N` es la cantidad de películas activas y `df` es en cuántas aparece ese nombre;
+     - la matriz es dispersa.
+4. **Calibración:** para cada señal, con 1.000 películas al azar:
+   - se calcula su similitud (producto escalar) contra todo el catálogo, sin contarse a sí misma;
+   - se toma el 10.º valor más alto;
+   - se guarda la mediana de los que son mayores que 0. Son `q_plot`, `q_géneros` y `q_personas`.
+5. **Vecinos**, en bloques de 1.000 películas para no armar la matriz completa:
+   ```
+   S = 0,2·(P·Pᵀ)/q_plot + 0,4·(G·Gᵀ)/q_géneros + 0,4·min((T·Tᵀ)/q_personas, 2)
+   ```
+   - Se excluye la propia película.
+   - Se guardan las 100 de mayor `S`: ids en `int32` y puntajes en `float32`.
+   - Tarda ≈ 15–20 s y ocupa 16 MB.
+6. **`WR`** (3.3), que después se recalcula cada 60 s con los votos activos:
+   - `C` = promedio de los votos activos.
+   - `Q = (V·imdb.rating + 3000·Ī) / (V + 3000)`, con `V = imdb.votes` e `Ī` = promedio de `imdb.rating` en el catálogo. Si falta `imdb.rating` o `imdb.votes`, no hay `Q`.
+   - `a` y `b`: regresión lineal de cada voto activo sobre el `Q` de su película, solo para las que tienen `Q`.
+   - `prior = a·Q + b`, o `C` si la película no tiene `Q`.
+   - `WR = (suma de sus votos + 5·prior) / (cantidad de votos + 5)`.
+   - `WRz = (WR − media) / desvío`, con la media y el desvío sobre el catálogo activo.
+   - **Rankings:** uno global y uno por género, ordenados por `WR`.
+7. `/health` pasa a `ready: true`.
+
+### 9.3 · Por petición
+
+**"Recomendadas para vos"** (7.1):
+
+1. Se leen los votos activos del usuario: `reviews` con su `user_id` y `deleted: false`. Ya hay un índice por `user_id` (`dataset/mongo-init.sh`).
+2. **Sin votos:** se devuelve el ranking global, con `source: "ranking"`.
+3. `punto medio = (suma de sus estrellas + 5·C) / (cantidad de votos + 5)`, y cada voto pesa `estrellas − punto medio`.
+4. Para cada película votada `i` y cada vecina `j` de su lista, si `j` no fue votada: `acc[j] += peso_i × S_ij`.
+5. **Ningún voto con peso positivo:** se devuelve el ranking global, sin las votadas ni las vecinas de las votadas.
+6. Candidatas: las 200 de mayor `acc`, solo con `acc > 0`.
+7. `puntaje = acc + 0,2·WRz`.
+8. **MMR**, para elegir de a una hasta `limit`:
+   - cada candidata vale `0,8·puntaje_n − 0,2·(su mayor similitud_n con las ya elegidas)`;
+   - `puntaje_n` es el puntaje llevado a 0–1 (mín–máx) entre las candidatas;
+   - `similitud_n` es `S` (fórmula de 9.2) entre las candidatas, dividida por su máximo. Son ≈ 200 × 200: no es contra el catálogo.
+9. **Candidatas que no alcanzan para `limit`:** se completa con el ranking global, sin repetir y sin las votadas. Generaliza el caso de 7.1, "menos de 10".
+10. **Motivo de cada recomendada:** la película votada que más aportó a su `acc` ("porque te gustó *Heat*").
+
+**"Películas similares a A":** se toma la lista de vecinas de A, con `puntaje = S + 0,2·WRz` y MMR como en el paso 8. Si A no está activa, se responde 404.
+
+**Rankings:** se leen los ya calculados, porque no dependen del usuario.
+
+### 9.4 · API para el `backend` (borrador, a acordar con el grupo)
+
+El `backend` le pide al `recommender` solo identificadores (README, "Recomendaciones") y completa la ficha desde MongoDB. Todo es HTTP interno en el puerto 8000.
+
+| Endpoint | Parámetros | Respuesta |
+| :-- | :-- | :-- |
+| `GET /users/{user_id}/recommendations` | `limit` (20 por defecto, máximo 100) | `{"source": "content" \| "ranking", "items": [{"movie_id", "score", "because": movie_id \| null}]}` |
+| `GET /movies/{movie_id}/similar` | `limit` (10 por defecto, máximo 100) | `{"items": [{"movie_id", "score"}]}`; 404 si la película no está activa |
+| `GET /rankings` | `genre` (opcional; sin él, el global), `limit` (20 por defecto, máximo 100) | `{"genre": … \| null, "items": [{"movie_id", "wr"}]}`; 404 si el género no existe |
+| `GET /genres` | — | `{"items": [{"genre", "movies"}]}`: los géneros con su cantidad de películas activas, para las filas y el onboarding |
+| `GET /health` | — | El de siempre, con `ready` (esqueleto) |
+
+- **Sin terminar de indexar**, los cuatro primeros responden **503**. El `backend` ya distingue ese estado por `GET /status` (`indexing`).
+- **`movie_id`** es el `_id` de la película como string hexadecimal.
+- **`because`** sirve para mostrar en la interfaz "porque te gustó…".
+- **Usuario sin votos:** `/users/{id}/recommendations` responde el ranking global (`source: "ranking"`). La fila "Para vos" del onboarding la arma el `backend` con `/rankings?genre=…` (3.5).
+- **El onboarding usa 22 géneros:** el `backend` saca de `/genres` los que no se ofrecen (Talk-Show, News, Short).
+
+### 9.5 · Volumen, dependencias y evaluación
+
+- **Volumen:** uno nombrado (por ejemplo `recommender-cache`), con los embeddings por hash del plot. Nada más, porque lo demás se recalcula en cada indexado (4.4).
+- **Dependencias:** `fastembed`, `numpy` y `scipy`. Las versiones con las que se midió están en [analysis/recomendador/requirements.txt](../analysis/recomendador/requirements.txt).
+- **Evaluación:** los scripts de [analysis/recomendador](../analysis/recomendador/) reproducen cada número de este documento. Con la base limpia hay que correr de nuevo `pesos.py` y `m_y_M.py`, leyendo de MongoDB en vez de los `.json.gz` (pendiente 7).
+
+## 10. Pendientes
 
 1. ~~Combinación con IMDb (R4)~~: decidida en 3.3.
 2. ~~Valores de `m` y `M` (R5)~~: decididos en 3.4. `k = 5` (R10).
@@ -570,5 +683,6 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 4. ~~Embeber en paralelo con la limpieza (R17)~~: decidido. Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. ~~Vecinos precalculados o producto por petición (R15)~~: vecinos precalculados, en 7.1. El `WR` se recalcula cada 60 s (R18, 7.2).
 6. ~~Calibración y pesos (R9), `β` y `λ` (R19)~~: decididos en 4.1, 4.3 y 6.3.
-7. Guardar los vectores en un volumen, para que el segundo arranque tarde pocos segundos (ya figura en el README; ver 4.4).
-8. Recalcular sobre la base limpia los números de la sección 2 y la prueba de conjuntos escondidos (6.3). No deberían moverse mucho; si se mueven, se revisan los valores.
+7. Recalcular sobre la base limpia los números de la sección 2, `m` y `M` (3.4) y la prueba de conjuntos escondidos (6.3). No deberían moverse mucho; si se mueven, se revisan los valores.
+8. ~~Guardar los vectores en un volumen~~: decidido en 4.4, solo los embeddings.
+9. Acordar con el grupo la API de 9.4 (`backend`) y las pantallas del onboarding (`frontend`).

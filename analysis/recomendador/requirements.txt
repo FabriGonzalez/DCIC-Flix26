@@ -1,0 +1,4 @@
+# Scripts de medición del recomendador (Python 3.12). Versiones con las que se midió.
+fastembed==0.9.1
+numpy==2.5.5
+scipy==1.18.1
