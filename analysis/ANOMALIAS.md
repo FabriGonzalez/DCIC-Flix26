@@ -65,7 +65,7 @@ El orden importa: varias reglas usan el resultado de otras (A8).
 - **Problema:** la misma película aparece varias veces. Hay 651 grupos por `imdb.id` (1.348 documentos) y 4 pares más con `imdb.id` distinto.
 - **Criterio (A3):** mismo `imdb.id`. Se descartó título + año porque da 21 falsos positivos (*Black Rain* de 1989 son dos películas: una de Ridley Scott y otra de Shōhei Imamura) y no detecta 37 grupos con el año o el título sucios.
 - **Regla secundaria (A4):** distinto `imdb.id`, pero mismo título normalizado, año y duración, **y** al menos un campo identificatorio no vacío que coincida (`directors` o `cast`). Detecta exactamente *Confessions of a Dangerous Mind*, *Eros*, *Divide and Conquer* y *The Kingdom*, y ninguno de los 21 homónimos.
-- **Fusión (A5, A6):** cada campo se toma de la copia más reciente (por `lastupdated`) que lo tenga válido. Si dos copias empatan en fecha, gana la que tiene más campos completos y, si siguen empatadas, el `_id` mayor. No se pierde información: por ejemplo, 9 años en `null` se recuperan de otra copia.
+- **Fusión (A5, A6):** cada campo se toma de la copia más reciente (por `lastupdated`) que lo tenga válido. Si dos copias empatan en fecha, gana la que tiene más campos completos y, si siguen empatadas, el `_id` mayor. No se pierde información: por ejemplo, 9 años en `null` se recuperan de otra copia. La fusión entra a los subdocumentos y toma las listas enteras (ver sección 7, cambios del 2026-11-20).
 - **Copias perdedoras (G2):** pasan a soft delete. Sus reseñas se reasignan a la ganadora (ver sección 5).
 
 ### P1 · `year`
@@ -222,15 +222,18 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 
 ### General
 
-- **Soft delete (G1, G2):** los documentos descartados no se borran. Se marcan con `deleted: true` y un motivo. **Todo servicio que lee tiene que filtrarlos.**
+- **Soft delete (G1, G2):** los documentos descartados no se borran. Se marcan con `deleted: true` y un motivo en `deletedReason`. **Todo servicio que lee tiene que filtrarlos** (`{ deleted: false }`). Los campos de esta sección están siempre presentes: si no aplican valen `false` o `null`.
 - **`null` significa "no se sabe".** El valor original de todo campo corregido o anulado vive en la auditoría, no en el documento.
 
 ### `movies`
 
 | Campo | Tipo | Garantía |
 | :-- | :-- | :-- |
+| `deleted` | `bool` | `true` en las copias duplicadas descartadas. |
+| `deletedReason` | `string` o `null` | `"duplicateMovie"`; `null` si está activa. |
+| `mergedInto` | `ObjectId` o `null` | `_id` de la copia ganadora, siempre una película activa; `null` si está activa. |
 | `year` | `int` o `null` | Para series, año de inicio. `null` si no se pudo rescatar ni completar desde una copia. |
-| `runtime` | `int` o `null` | Minutos, positivo. El frontend lo formatea para mostrarlo. |
+| `runtime` | `int` o `null` | Minutos, positivo. El frontend lo formatea para mostrarlo. Nunca falta: si no se sabe, `null`. |
 | `genres` | lista de `string` | Sin espacios sobrantes. Puede faltar. |
 | `title` | `string` | Sin espacios al inicio ni al final. |
 | `imdb.rating` | `double` o `null` | Escala 0–10, nunca `0` como "desconocido". `null` si `imdb.votes` es `null`. |
@@ -251,7 +254,9 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 | `rating` | `int` 1–5 | Puede venir del texto (regex o LLM); el origen queda en la auditoría. |
 | `date` | `Date` o `null` | `null` si la fecha original era imposible o desconocida. |
 | `datePrecision` | `"day"`, `"year"` o `null` | `"year"` para las `circa`: el frontend muestra solo el año. `null` si y solo si `date` es `null`. |
-| comentario oculto | marca a nivel comentario | Distinta del soft delete: el voto sigue contando. |
+| `deleted` | `bool` | `true` si la reseña se descartó. |
+| `deletedReason` | `string` o `null` | `"anonymous"` (B4), `"orphan"` (B11), `"duplicateVote"` (B13) o `"noContent"` (B12); `null` si está activa. Un solo motivo: el de la primera regla que la descarta. |
+| `commentHidden` | `bool` | `true` si el comentario es basura o sin contenido (B7, B8). Distinto del soft delete: el voto sigue contando y el texto queda en la base, pero no se muestra. |
 | unicidad | — | Como máximo un voto visible por usuario y película. |
 
 ### Aclaraciones acordadas (2026-11-19)
@@ -264,14 +269,27 @@ Confirmadas por el grupo al revisar el contrato desde el recomendador ([docs/rec
 - **Listas de personas:** `directors`, `cast` y `writers` pueden faltar, igual que `genres`. En el crudo faltan en 238, 204 y 995 películas.
 - **`plot` no se modifica:** ninguna regla lo cambia. La única excepción es la fusión de duplicados (A5), que puede quedarse con el plot de otra copia (2 de los 651 grupos). El recomendador embebe los plots mientras corre la limpieza, así que si una regla futura modifica `plot`, hay que avisarle.
 
+### Cambios al implementar el `cleaning-agent` (2026-11-20)
+
+Decisiones que el análisis no definía y aparecieron al escribir el código. Las tablas de arriba ya las incluyen.
+
+- **`runtime` nunca falta:** las 225 películas sin el campo pasan a `runtime: null`, como pide el tipo "`int` o `null`". Después de la fusión quedan 310 activas en `null`.
+- **`datePrecision` puede ser `null`:** lo es si y solo si `date` es `null` (227 reseñas con `yesterday` o fecha futura). Una precisión de día para una fecha desconocida diría algo falso.
+- **Campos de soft delete:** además de `deleted`, las películas tienen `deletedReason` y `mergedInto`, y las reseñas, `deletedReason` y `commentHidden`. Están siempre presentes, igual que `deleted`.
+- **Un solo motivo por reseña descartada:** se aplican en orden B4, B11, B13, B12 y queda el primero. En el dataset no hay solapamientos que cambien los números: ningún voto duplicado es huérfano, y las anónimas no participan de B13.
+- **Alcance de la fusión (A5):** entra a los subdocumentos, así que `imdb.rating` puede venir de otra copia aunque el resto de `imdb` sea de la ganadora. Las listas (`cast`, `genres`, …) se toman enteras de una sola copia, porque mezclarlas inventaría un elenco que no existe. `num_mflix_comments` no se fusiona porque se recalcula al final (A16).
+- **`tomatoes` mezclado en 2 películas:** en *Confessions of a Dangerous Mind* y *Divide and Conquer*, unidas por A4 (cada copia tenía su propio `imdb.id` y su propio registro de Rotten Tomatoes), la fusión completó `critic`, `fresh`, `rotten`, `viewer` y otros subcampos desde la otra copia. Los datos quedan coherentes entre sí (`fresh + rotten = critic.numReviews`), pero `tomatoes.lastUpdated` es el de la ganadora. **Se deja así** porque `tomatoes` no se usa (A26). Si se empieza a usar, conviene tratarlo como un bloque que no se mezcla.
+- **Reseñas para el LLM: 1.884, no 1.894.** El rating se infiere solo en reseñas activas, y 10 de las 1.894 van a soft delete (anónimas, huérfanas o votos duplicados).
+- **Qué no va a la auditoría:** los campos que se agregan sin corregir un valor (`deleted: false`, `deletedReason: null`, `datePrecision`, el `runtime: null` de un campo faltante) y los cambios de tipo sin cambio de valor (`imdb.rating` `7` → `7.0`). Todo lo demás registra campo, regla, valor original y valor nuevo.
+
 ## 8. Pendientes
 
 ### Para el grupo
 
 1. **¿Qué campos de `movies` usan la ficha y el recomendador?** Define cuánto invertir en cada campo. Por ejemplo, `tomatoes` (A26, A27) hoy no se corrige porque no se sabe si se usa.
-2. **`mergedInto` en las copias fusionadas:** propuesta para que las copias de películas que van a soft delete guarden el `_id` de la ganadora. El `cleaning-agent` ya tiene ese dato. Sirve para redirigir reseñas que lleguen después con un id viejo y para explicar la fusión en la auditoría.
+2. ~~**`mergedInto` en las copias fusionadas.**~~ Resuelto (2026-11-20): se incluye en el contrato (sección 7).
 3. **Promedio de estrellas vs. contador de reseñas (A16):** el promedio incluye los votos de reseñas con comentario oculto y el contador no, así que pueden no coincidir ("★ 4.2 (8 reseñas)" calculado con 10 votos). Hay que decidir si se muestran votos y reseñas por separado o si se documenta.
-4. **Sugerencia, no es parte del contrato: medir cuánto tarda la limpieza completa.** El profesor tiene que poder probar la app en unos 10 minutos desde cero. El recomendador tarda ≈6 minutos en embeber los plots y lo hace en paralelo con la limpieza (recomendador, 4.4), así que sirve saber cuál de los dos termina último.
+4. **Sugerencia, no es parte del contrato: medir cuánto tarda la limpieza completa.** El profesor tiene que poder probar la app en unos 10 minutos desde cero. El recomendador tarda ≈6 minutos en embeber los plots y lo hace en paralelo con la limpieza (recomendador, 4.4), así que sirve saber cuál de los dos termina último. **Medición parcial (2026-11-20):** las reglas sin LLM tardan ≈4 s sobre todo el dataset, en memoria. Falta medir la lectura y escritura en Mongo y la inferencia con el LLM (≈1.900 llamadas), que va a ser la parte lenta.
 
 ### Para la cátedra
 
@@ -284,3 +302,4 @@ Confirmadas por el grupo al revisar el contrato desde el recomendador ([docs/rec
 - **`circa` frente a una fecha exacta del mismo año (B13):** no se puede saber cuál es posterior. Hoy no hay casos.
 - **Pósters (A24):** el ≈12 % de imágenes rotas es una estimación por muestra, y la cifra cambia con el tiempo.
 - **`released`, `tomatoes.dvd` y `tomatoes.critic`** se conservan como vienen aunque tengan valores dudosos.
+- **`tomatoes` de dos copias (A5):** en 2 películas fusionadas por A4, `tomatoes` combina subcampos de dos registros distintos (ver sección 7, cambios del 2026-11-20).
