@@ -17,3 +17,7 @@ dist/
 
 # Notas personales, no se comparten con el grupo
 notasPersonales/
+
+# Modelo y vectores de las mediciones del recomendador
+analysis/recomendador/cache/
+.venv-reco/
