@@ -20,7 +20,7 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R2 | Usuario sin votos | Ranking por promedio bayesiano | decidida |
 | R3 | Fuentes del ranking | Votos propios e `imdb.rating` | decidida |
 | R4 | Combinación votos propios + IMDb | IMDb, con su propio bayesiano, es el punto de partida, y los votos propios lo corrigen (ver [3.3](#33--combinación-con-imdb-r4)) | decidida |
-| R5 | Valores de `m` y `M` | Se ajustan con los votos del dataset, que sí sirven para la calidad | abierta |
+| R5 | Valores de `m` y `M` | `m = 5` (medido), `M = 3.000` (por criterio); el pasaje a 1–5 se recalcula al indexar | decidida |
 | R6 | Filas por género en la portada | Mismo ranking bayesiano, filtrado por género | propuesta |
 | R7 | Onboarding (preguntar gustos al entrar) | No hacerlo: en la demo, los votos cumplen ese papel | propuesta |
 | R8 | Usuario con votos | Por contenido, con tres señales: plot, géneros y personas | decidida |
@@ -159,9 +159,35 @@ El mismo `WR` es el que usa el piso de calidad `β·WR` de las recomendaciones p
 | Solo votos propios (3.1 tal cual) | Las 7.440 películas sin votos quedan empatadas en `C`, y el resto depende de 2 o 3 votos ruidosos |
 | Promedio ponderado de dos rankings, `α·WR_propio + (1−α)·WR_imdb` | Agrega un peso `α` sin forma de justificarlo; la propuesta resuelve lo mismo sin él |
 
-**`m` y `M` (R5):** son de calidad, así que se ajustan con los votos del dataset: se esconden votos y se elige el par que mejor los predice (6.2). Como los votos propios convergen a IMDb, es probable que `m` salga alto: hacen falta bastantes votos propios para contradecir a IMDb. El análisis de 3.2 (entre 5 y 15) se hizo con `C` como punto de partida y hay que rehacerlo.
+### 3.4 · Valores de `m` y `M` (R5)
 
-### 3.4 · Presentación (R6, R7)
+- **`M`:** cuántos votos de IMDb hacen falta para creerle a su promedio.
+- **`m`:** cuántos votos propios hacen falta para contradecir a IMDb.
+
+**Medición:** en las 7.403 películas con 2 o más votos propios, se escondió la mitad de los votos (25.299, semilla 2026), se calculó `WR` con la otra mitad y se midió el error al predecir los escondidos (RMSE, menor es mejor):
+
+| Predicción | RMSE |
+| :-- | --: |
+| Promedio global `C` para todas | 0,883 |
+| Solo el promedio propio, sin IMDb | 0,778 |
+| Solo IMDb, sin votos propios (`m = ∞`) | 0,751 |
+| **IMDb + votos propios, `m = 5`** | **0,725** |
+
+| `M` \ `m` | 1 | 2 | 5 | 10 | 20 | 50 |
+| :-- | --: | --: | --: | --: | --: | --: |
+| 0 | 0,7409 | 0,7311 | **0,7249** | 0,7262 | 0,7313 | 0,7396 |
+| 1.000 | 0,7418 | 0,7327 | 0,7275 | 0,7294 | 0,7348 | 0,7433 |
+| 3.000 | 0,7425 | 0,7341 | 0,7298 | 0,7322 | 0,7380 | 0,7468 |
+| 10.000 | 0,7436 | 0,7361 | 0,7335 | 0,7370 | 0,7438 | 0,7533 |
+| 30.000 | 0,7450 | 0,7390 | 0,7390 | 0,7447 | 0,7531 | 0,7642 |
+
+- **`m = 5` (medido):** es el mejor con cualquier `M`. Con 5 votos propios, la película pesa mitad lo propio y mitad IMDb. Combinar las dos fuentes le gana a usar cualquiera sola, y eso confirma R4.
+- **`M = 3.000` (por criterio):** el menor error es con `M = 0`, pero la diferencia contra 3.000 es del 0,7 %. Lo que sí cambia es la portada. Con `M = 0`, el top 10 incluye *The Real Miyagi* (9,3 con 41 votos en IMDb) y *A Brave Heart* (9,4 con 45) al lado de *The Godfather*. Con `M = 3.000` salen, y entran *The Decalogue*, *Pride and Prejudice* y *Cosmos*. El dataset prefiere `M = 0` porque los usuarios sintéticos parecen haber seguido a `imdb.rating` sin importar cuántos votos tenía (6.1), así que no sirve para decidir `M`. 3.000 es aproximadamente la mediana de `imdb.votes`.
+- **El pasaje a 1–5 se recalcula al indexar:** es una regresión de los votos activos sobre `Q`, en cada `data.cleaned`, en lugar de números fijos en el código. En el crudo da `0,48·Q + 0,18`.
+
+Reemplaza el análisis de 3.2 (`m` entre 5 y 15), que usaba `C` como punto de partida. Los números se recalculan sobre la base limpia.
+
+### 3.5 · Presentación (R6, R7)
 
 - **Filas por género (propuesta):** en lugar de una sola lista, una fila por género ("Lo mejor en Comedia", "Lo mejor en Acción"), con el mismo ranking filtrado. Da variedad y facilita encontrar algo para votar. Después de la limpieza quedan 25 géneros.
 - **Onboarding (propuesta: no hacerlo):** sería una pantalla inicial que pide géneros favoritos o unos votos. En la demo, los profesores eligen un usuario nuevo y votan, y eso ya cumple ese papel.
@@ -394,7 +420,7 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 ## 9. Pendientes
 
 1. ~~Combinación con IMDb (R4)~~: decidida en 3.3.
-2. Los valores de `m` y `M` (R5), ajustados con los votos del dataset. `k = 5` ya está decidido (R10).
+2. ~~Valores de `m` y `M` (R5)~~: decididos en 3.4. `k = 5` (R10).
 3. Confirmar las filas por género (R6) y no hacer onboarding (R7).
 4. Confirmar que se embebe en paralelo con la limpieza (R17). Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. Vecinos precalculados o producto por petición (R15).
