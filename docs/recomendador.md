@@ -19,8 +19,8 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R1 | Usuarios | No se crean desde la app: se elige uno de una lista, que incluye usuarios nuevos precargados sin votos | decidida |
 | R2 | Usuario sin votos | Ranking por promedio bayesiano | decidida |
 | R3 | Fuentes del ranking | Votos propios e `imdb.rating` | decidida |
-| R4 | Combinación votos propios + IMDb | Ver [3.3](#33-combinación-con-imdb) | abierta |
-| R5 | Valor de `m` | Entre 5 y 15 para los votos propios | abierta |
+| R4 | Combinación votos propios + IMDb | IMDb, con su propio bayesiano, es el punto de partida, y los votos propios lo corrigen (ver [3.3](#33--combinación-con-imdb-r4)) | decidida |
+| R5 | Valores de `m` y `M` | Se ajustan con los votos del dataset, que sí sirven para la calidad | abierta |
 | R6 | Filas por género en la portada | Mismo ranking bayesiano, filtrado por género | propuesta |
 | R7 | Onboarding (preguntar gustos al entrar) | No hacerlo: en la demo, los votos cumplen ese papel | propuesta |
 | R8 | Usuario con votos | Por contenido, con tres señales: plot, géneros y personas | decidida |
@@ -108,11 +108,58 @@ IMDb elige `m` como un percentil de la cantidad de votos por película: así sal
 
 **Propuesta:** entre 5 y 15. El valor final se elige con la evaluación (R13).
 
-### 3.3 · Combinación con IMDb
+### 3.3 · Combinación con IMDb (R4)
 
-`imdb.rating` (escala 0–10) e `imdb.votes` están en casi todas las películas, incluidas las ~7.400 sin votos propios, que sin IMDb quedarían todas empatadas en `C`. La limpieza garantiza un `double` y un `int`, o `null` en ambos (ANOMALIAS, A12, A14, A15).
+Hay dos fuentes:
 
-Falta decidir cómo se combinan las dos fuentes (R4). Las escalas son distintas: IMDb va de 0 a 10 con miles de votos por película; la nuestra, de 1 a 5 con pocos. Cada fuente necesitaría su propio `m`, y en IMDb estaría en los miles.
+- **Votos propios:** las reseñas de la base, de 1 a 5. Son las del dataset más las que se cargan en la app.
+- **IMDb:** `imdb.rating` (promedio de 0 a 10) e `imdb.votes` (cuánta gente votó). La limpieza garantiza un `double` y un `int`, o `null` (ANOMALIAS, A12, A14, A15).
+
+Medido en el crudo:
+
+| Dato | Valor |
+| :-- | :-- |
+| Películas con `imdb.rating` válido | 19.705 de 19.842 |
+| Películas sin votos propios | 7.440; 7.392 de ellas tienen IMDb |
+| `imdb.votes` por película | Mediana 2.900; percentil 10: 337; percentil 90: 59.945 |
+| Promedio de `imdb.rating` | 6,67 |
+| Correlación entre el promedio propio y `imdb.rating` | 0,66 con ≥ 1 voto propio; 0,79 con ≥ 5; **0,80** con ≥ 17 |
+
+**Cuantos más votos propios tiene una película, más se parece su promedio a IMDb.** Los votos del dataset son, en la práctica, una versión ruidosa de IMDb con muy pocos votantes (ver también 6.1). IMDb tiene la misma información, con miles de votos por película.
+
+**Decisión: IMDb es el punto de partida y los votos propios lo corrigen.** En lugar de arrancar toda película en el promedio global `C`, arranca en lo que dice IMDb de esa película:
+
+1. **IMDb con su propio bayesiano**, para que cuente `imdb.votes` (un 9 con 40 votos no vale lo mismo que uno con 500.000):
+   ```
+   Q = (V·imdb.rating + M·6,67) / (V + M)
+   ```
+   `V` = `imdb.votes`; 6,67 = promedio de IMDb en el catálogo; `M` en los miles (con la mediana, ≈ 3.000).
+2. **Pasar a la escala 1–5** con la relación medida en los votos: `Q₅ = 0,49·Q + 0,14`.
+3. **Votos propios sobre IMDb**, la fórmula de 3.1 con `Q₅` en lugar de `C`:
+   ```
+   WR = (v·R + m·Q₅) / (v + m)
+   ```
+   Si la película no tiene IMDb (137 en el crudo), se usa `C`.
+
+Ejemplos con `M = 3.000` y `m = 10`:
+
+| Película | IMDb | Votos propios | `Q₅` | `WR` | Efecto |
+| :-- | :-- | :-- | --: | --: | :-- |
+| X | 8,5 con 500.000 votos | ninguno | 4,31 | 4,31 | Sin votos propios queda arriba; con 3.1 sola quedaría empatada en `C` |
+| Y | 9,0 con 40 votos | ninguno | 3,42 | 3,42 | Con pocos votos en IMDb, casi no se le cree el 9 |
+| Z | 7,0 con 20.000 votos | 10, promedio 4,8 | 3,55 | 4,18 | Los votos propios la suben |
+
+El mismo `WR` es el que usa el piso de calidad `β·WR` de las recomendaciones personalizadas (4.3).
+
+**Alternativas descartadas:**
+
+| Alternativa | Por qué no |
+| :-- | :-- |
+| Solo IMDb | Los votos de la app no cambiarían el ranking: si los profesores votan, la portada sigue igual |
+| Solo votos propios (3.1 tal cual) | Las 7.440 películas sin votos quedan empatadas en `C`, y el resto depende de 2 o 3 votos ruidosos |
+| Promedio ponderado de dos rankings, `α·WR_propio + (1−α)·WR_imdb` | Agrega un peso `α` sin forma de justificarlo; la propuesta resuelve lo mismo sin él |
+
+**`m` y `M` (R5):** son de calidad, así que se ajustan con los votos del dataset: se esconden votos y se elige el par que mejor los predice (6.2). Como los votos propios convergen a IMDb, es probable que `m` salga alto: hacen falta bastantes votos propios para contradecir a IMDb. El análisis de 3.2 (entre 5 y 15) se hizo con `C` como punto de partida y hay que rehacerlo.
 
 ### 3.4 · Presentación (R6, R7)
 
@@ -304,8 +351,8 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 
 ## 9. Pendientes
 
-1. Cómo combinar los votos propios con IMDb (R4).
-2. El valor de `m` (R5) y el de `k` para el punto medio (R10).
+1. ~~Combinación con IMDb (R4)~~: decidida en 3.3.
+2. Los valores de `m` y `M` (R5), ajustados con los votos del dataset, y el de `k` para el punto medio (R10).
 3. Confirmar las filas por género (R6) y no hacer onboarding (R7).
 4. Confirmar que se embebe en paralelo con la limpieza (R17). Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. Vecinos precalculados o producto por petición (R15).
