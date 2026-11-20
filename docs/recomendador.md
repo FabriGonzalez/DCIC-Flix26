@@ -24,12 +24,12 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R6 | Filas por género en la portada | Mismo ranking bayesiano, filtrado por género | propuesta |
 | R7 | Onboarding (preguntar gustos al entrar) | No hacerlo: en la demo, los votos cumplen ese papel | propuesta |
 | R8 | Usuario con votos | Por contenido, con tres señales: plot, géneros y personas | decidida |
-| R9 | Pesos de las tres señales | No se pueden ajustar con los votos del dataset (ver 6) | abierta |
+| R9 | Pesos de las tres señales | Se calibran las escalas y los pesos se eligen con la prueba de conjuntos escondidos (6.3); los votos del dataset no sirven para esto | decidida (valores abiertos) |
 | R16 | Señal faltante en una película | Pesos fijos: el término vale 0 y no se redistribuye | decidida |
-| R10 | Perfil del usuario | Suma de vectores ponderada por `estrellas − punto medio` | propuesta |
+| R10 | Perfil del usuario | Suma de vectores ponderada por `estrellas − punto medio`, con `k = 5` para el punto medio | propuesta (`k` decidido) |
 | R11 | Filtrado colaborativo | No se usa: no hay votos suficientes | descartada |
 | R12 | Híbrido contenido + colaborativo | No aplica, por R11 | descartada |
-| R13 | Evaluación | Los votos del dataset sirven para la calidad, no para los gustos: falta definir cómo evaluar los gustos | abierta |
+| R13 | Evaluación | Calidad: con los votos del dataset. Gustos: prueba automática de conjuntos escondidos, sin intervención humana | decidida |
 | R14 | Modelo de embeddings del plot | Local, dentro del contenedor: se descarga en el build y embebe al arrancar | decidida |
 | R15 | Cálculo por petición | Vecinos precalculados, o producto contra todo el catálogo | abierta |
 | R17 | Cuándo se embebe | Al arrancar, en paralelo con la limpieza, con el hash del plot como clave | propuesta |
@@ -182,6 +182,19 @@ similitud(A, B) = w₁·cos(plot_A, plot_B) + w₂·cos(géneros_A, géneros_B) 
 
 La misma similitud sirve para "Películas similares".
 
+**Escalas y pesos (R9):** las tres señales no están en la misma escala, así que pesos iguales no dan la misma influencia. Medido en 20.000 pares de películas al azar (sin copias duplicadas):
+
+| Señal | Media | Desvío | Percentil 99 | Pares con 0 |
+| :-- | --: | --: | --: | --: |
+| Plot | 0,134 | 0,096 | 0,376 | 0 % |
+| Géneros | 0,266 | 0,300 | 1,000 | 51,1 % |
+| Personas (TF-IDF) | 0,000 | 0,008 | 0,000 | 99,8 % |
+
+- **Géneros varía tres veces más que el plot:** con pesos iguales, el orden lo decidirían casi solo los géneros, y compartir "Drama" pesaría más que tener una trama casi idéntica.
+- **Personas es un bonus ocasional:** vale 0 casi siempre, pero cuando coincide salta mucho.
+
+Por eso, primero se **calibra** cada señal a una escala comparable (por ejemplo, plot y géneros divididos por su desvío, y un tope al aporte de personas para que una coincidencia no tape lo demás) y recién después se eligen los pesos. Para empezar: plot > personas > géneros, porque el plot es la señal más rica y la única que generaliza. Los valores finales salen de la prueba de conjuntos escondidos (6.3).
+
 **Plot:**
 
 - Se usa `plot` y no `fullplot`. `plot` está en todas las películas; `fullplot` falta en unas 300 y es largo, y los modelos chicos cortan el texto (alrededor de 256 sub-palabras).
@@ -234,7 +247,19 @@ El perfil es la suma de los vectores de las películas que votó, cada uno **mul
 
 Ejemplo con vectores de 2 dimensiones `[acción, romance]`: Mad Max `(1, 0)` con 5 ★, Die Hard `(0,9, 0,1)` con 4 ★ y Titanic `(0, 1)` con 1 ★ dan `2·(1, 0) + 1·(0,9, 0,1) − 2·(0, 1) = (2,9, −1,9)`. El perfil apunta a la acción y se aleja del romance.
 
-**Punto medio:** un 3 fijo supone que todos usan la escala igual, y para quien pone 4 a casi todo, un 3 es una mala nota. Se propone usar el promedio del usuario, corregido hacia `C` como en 3.1: `(n·promedio_usuario + k·C) / (n + k)`. Sin esa corrección, un usuario nuevo con un solo voto tendría peso 0 y el perfil quedaría vacío. El valor de `k` queda abierto.
+**Punto medio:** un 3 fijo supone que todos usan la escala igual, y para quien pone 4 a casi todo, un 3 es una mala nota. Se propone usar el promedio del usuario, corregido hacia `C` como en 3.1: `(n·promedio_usuario + k·C) / (n + k)`. Sin esa corrección, un usuario nuevo con un solo voto tendría peso 0 y el perfil quedaría vacío.
+
+**`k = 5` (decidido):** es cuántos votos hacen falta para creerle al promedio propio del usuario, y es lo que vota un profesor en los primeros minutos de la demo. Se fija por criterio, porque en el dataset los promedios por usuario van casi todos de 3,22 a 3,82 y no hay diferencias de escala para ajustarlo. Con `C = 3,525`:
+
+| Usuario | Punto medio | Peso de un 5 | Peso de un 4 |
+| :-- | --: | --: | --: |
+| Nuevo, votó un solo 5 | 3,77 | +1,23 | — |
+| 20 votos, promedio 4,5 (generoso) | 4,31 | +0,69 | −0,31 |
+| 20 votos, promedio 3,0 (exigente) | 3,11 | +1,89 | +0,89 |
+
+Al usuario nuevo el primer voto ya le arma el perfil; al generoso, un 4 le cuenta como "no tan bueno".
+
+**Descartado:** usar como punto medio lo esperable para cada película (`Q₅`, como en la prueba B de 6.1). Un 4 a *The Godfather* daría peso negativo, y el perfil se alejaría de una película que al usuario le gustó.
 
 Se recomiendan las películas más cercanas al perfil (por coseno), excluyendo las que ya votó.
 
@@ -320,7 +345,24 @@ Se corrió dos veces:
 | Calidad: promedio bayesiano (R2), valor de `m` (R5), combinación con IMDb (R4), piso `β·WR` (4.3) | **Sí**: los votos siguen a la calidad |
 | Gustos: ajustar `w₁`, `w₂`, `w₃` (R9) y mostrar que el contenido le gana a la popularidad | **No**: no hay gustos que encontrar |
 
-La evaluación propuesta antes (división temporal por usuario, popularidad contra contenido, con precision@10 y NDCG@10) sigue sirviendo para la parte de calidad. Para la parte de gustos daría una conclusión engañosa: la popularidad ganaría, y no porque el contenido sea malo, sino porque estos votos no tienen gustos. Falta definir cómo evaluar los gustos (por ejemplo, con perfiles armados a propósito y revisando a mano lo que se recomienda).
+La evaluación propuesta antes (división temporal por usuario, popularidad contra contenido, con precision@10 y NDCG@10) sigue sirviendo para la parte de calidad. Para la parte de gustos daría una conclusión engañosa: la popularidad ganaría, y no porque el contenido sea malo, sino porque estos votos no tienen gustos.
+
+### 6.3 · Evaluación de gustos: conjuntos escondidos (R13)
+
+Como los votos del dataset no tienen gustos, se arman casos donde se sabe de antemano qué debería recomendarse:
+
+1. Se toma un conjunto de películas que "van juntas".
+2. Se crea un usuario ficticio que vota 3 de ellas con 5 ★.
+3. Se mide qué parte del resto del conjunto aparece en sus 20 primeras recomendaciones (recall@20).
+4. Se repite con muchos conjuntos y con distintas combinaciones de pesos (R9). Se eligen los pesos que mejor dan en todos los tipos de conjunto.
+
+**Se mezclan varios tipos de conjunto,** porque cada uno favorece a una señal: las películas de un mismo director favorecen a personas, las sagas favorecen al plot, y las combinaciones de géneros favorecen a géneros. Con un solo tipo, la prueba elegiría siempre los pesos de esa señal.
+
+**Limitación:** mide coherencia (que recomiende "lo del mismo tipo"), no si a una persona le gusta lo recomendado. Es lo más cercano que se puede medir sin usuarios reales.
+
+La prueba también imprime algunas listas de ejemplo ("votó 3 de un director → recomienda esto"), que sirven para el informe sin trabajo extra.
+
+**Descartadas por tiempo:** revisar a mano perfiles armados a propósito, y un estudio con personas reales votando y puntuando recomendaciones. La evaluación no tiene intervención humana.
 
 ## 7. Integración con la arquitectura
 
@@ -352,10 +394,10 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 ## 9. Pendientes
 
 1. ~~Combinación con IMDb (R4)~~: decidida en 3.3.
-2. Los valores de `m` y `M` (R5), ajustados con los votos del dataset, y el de `k` para el punto medio (R10).
+2. Los valores de `m` y `M` (R5), ajustados con los votos del dataset. `k = 5` ya está decidido (R10).
 3. Confirmar las filas por género (R6) y no hacer onboarding (R7).
 4. Confirmar que se embebe en paralelo con la limpieza (R17). Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. Vecinos precalculados o producto por petición (R15).
-6. Cómo evaluar los gustos (R13) y, con eso, cómo fijar los pesos de las señales (R9): los votos del dataset no sirven para esto (6.1).
+6. Cómo calibrar las señales y los valores de los pesos (R9), elegidos con la prueba de conjuntos escondidos (6.3).
 7. Guardar los vectores en un volumen, para que el segundo arranque tarde pocos segundos (ya figura en el README; ver 4.4).
 8. Recalcular los números de la sección 2 sobre la base limpia.
