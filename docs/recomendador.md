@@ -24,12 +24,12 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R6 | Filas por género en la portada | Mismo ranking bayesiano, filtrado por género | propuesta |
 | R7 | Onboarding (preguntar gustos al entrar) | No hacerlo: en la demo, los votos cumplen ese papel | propuesta |
 | R8 | Usuario con votos | Por contenido, con tres señales: plot, géneros y personas | decidida |
-| R9 | Pesos de las tres señales | Se ajustan con la evaluación | abierta |
+| R9 | Pesos de las tres señales | No se pueden ajustar con los votos del dataset (ver 6) | abierta |
 | R16 | Señal faltante en una película | Pesos fijos: el término vale 0 y no se redistribuye | decidida |
 | R10 | Perfil del usuario | Suma de vectores ponderada por `estrellas − punto medio` | propuesta |
 | R11 | Filtrado colaborativo | No se usa: no hay votos suficientes | descartada |
 | R12 | Híbrido contenido + colaborativo | No aplica, por R11 | descartada |
-| R13 | Evaluación | División temporal por usuario, contra el ranking de popularidad | propuesta |
+| R13 | Evaluación | Los votos del dataset sirven para la calidad, no para los gustos: falta definir cómo evaluar los gustos | abierta |
 | R14 | Modelo de embeddings del plot | Local, dentro del contenedor: se descarga en el build y embebe al arrancar | decidida |
 | R15 | Cálculo por petición | Vecinos precalculados, o producto contra todo el catálogo | abierta |
 | R17 | Cuándo se embebe | Al arrancar, en paralelo con la limpieza, con el hash del plot como clave | propuesta |
@@ -139,6 +139,8 @@ La misma similitud sirve para "Películas similares".
 
 - Se usa `plot` y no `fullplot`. `plot` está en todas las películas; `fullplot` falta en unas 300 y es largo, y los modelos chicos cortan el texto (alrededor de 256 sub-palabras).
 - El modelo y su uso se detallan en [4.4](#44--embeddings-del-plot-r14-r17).
+- **Calidad del texto (medida en el crudo):** mediana de 28 palabras y el 90 % entre 12 y 39, así que entra entero en el modelo. No hay placeholders ("No plot available"). Hay 317 con menos de 10 palabras (1,6 %), pero igual dicen algo (*"Vampires terrorize a city in Norrbotten."*). El 30 % termina en "...": es el resumen de IMDb truncado, pero conserva las ~30 primeras palabras. Hay 12 textos repetidos en 24 películas distintas, todos legítimos (la serie *Up* de Apted, remakes). El 2,2 % tiene `è` (A13), casi siempre en nombres propios.
+- **Es una señal significativa:** de 2.000 películas al azar, sus 10 vecinas por plot comparten al menos un género en el **71,1 %** de los casos, contra el **48,9 %** de 10 películas al azar. A ojo también tiene sentido: *Toy Story* → *Toys in the Attic*, *A Town Called Panic*; *Alien* → *Forbidden Planet*, *Ghost Ship*.
 
 **Personas:**
 
@@ -189,6 +191,8 @@ Ejemplo con vectores de 2 dimensiones `[acción, romance]`: Mad Max `(1, 0)` con
 
 Se recomiendan las películas más cercanas al perfil (por coseno), excluyendo las que ya votó.
 
+**El gusto lo ponen los votos del usuario:** el plot, los géneros y las personas son el idioma en que se expresa, y los votos deciden hacia dónde apunta el perfil. Dos usuarios que votan distinto reciben recomendaciones distintas. Los votos de los demás usuarios no cambian las recomendaciones de uno, salvo por el piso de calidad (4.3).
+
 ### 4.3 · Ajuste final de la lista (propuesta)
 
 - **Piso de calidad:** sumar un término `β·WR` al puntaje, para que la cercanía al perfil no saque películas malas.
@@ -236,12 +240,40 @@ El filtrado colaborativo recomienda según quién votó qué, sin mirar el conte
 
 Con estos datos, el colaborativo no aporta información que no dé el contenido, y agrega un modelo más para entrenar y mantener. Por eso se descarta, y con él el híbrido contenido + colaborativo. El híbrido que queda es contenido + calidad (4.3).
 
-## 6. Evaluación (R13, propuesta)
+## 6. Evaluación (R13, abierta)
 
-Las reseñas tienen fecha, así que para cada usuario se entrena con sus votos más viejos y se evalúa con los últimos N. Se compara el ranking de popularidad (3.1) contra el modelo por contenido, con precision@10 y NDCG@10. La comparación sirve para:
+### 6.1 · Los votos del dataset no reflejan gustos
 
-- ajustar los pesos `w₁`, `w₂`, `w₃` y `β`, y el valor de `m`;
-- justificar el modelo con números: si el contenido no le gana a la popularidad, no aporta.
+**Prueba de dejar una afuera:** para cada usuario se esconde una película que le gustó y se mira si, según una señal, se parece más a sus otras películas que le gustaron o a las que no. Se repite con cada película que le gustó a cada usuario (~25.000 veces). Una señal que no sabe nada de los gustos acierta el 50 %, como una moneda. Se excluyen los pares de copias duplicadas (mismo `imdb.id`).
+
+Se corrió dos veces:
+
+- **A. Votos tal cual:** "le gustó" = 4 o 5 estrellas; "no le gustó" = 1 o 2.
+- **B. Votos corregidos por calidad:** a cada voto se le resta lo que cualquiera le pondría a esa película según su IMDb (`esperado = 0,49 × imdb + 0,14`, ajustado con todos los votos). La diferencia es el gusto personal: un 3 a *The Godfather* (IMDb 9,2, esperado 4,6) da −1,6, y un 4 a una de terror de IMDb 5 (esperado 2,6) da +1,4. "Le gustó" = el cuarto de sus votos con mayor diferencia; "no le gustó" = el cuarto con menor.
+
+| Señal | A. Votos tal cual | B. Corregidos por calidad |
+| :-- | --: | --: |
+| Cercanía en `imdb.rating` (sin contenido) | 84,2 % | 53,0 % |
+| Plot | 49,0 % | 50,2 % |
+| Géneros | 59,1 % | 49,0 % |
+| Personas | 81,1 % | 47,1 % |
+
+- **En A**, personas y géneros parecen funcionar, pero es la calidad colándose: los votos siguen a IMDb (correlación 0,53), y un mismo director suele tener varias películas de IMDb parecido. Solo la cercanía de IMDb, sin mirar el contenido, ya acierta el 84 %.
+- **En B**, con la calidad descontada, las cuatro señales caen a ≈ 50 %: lo que queda en los votos es ruido.
+- Coincide con otros dos datos: los promedios por usuario van casi todos de 3,22 a 3,82 (percentiles 5 y 95), y los usuarios no se concentran en ningún género. El 50 % de sus votos cae en su género más votado, contra el 59 % de un usuario que elige películas al azar.
+
+**Lectura:** los usuarios del dataset puntúan según la calidad de la película más ruido, sin gustos propios. Parecen sintéticos, y las reseñas también (*"A well-earned 4 stars"*). Es una inferencia: el dataset no lo dice.
+
+**Qué no cambia:** el plot sigue siendo una señal significativa (4.1), y con usuarios reales, como los profesores en la demo, el perfil (4.2) refleja sus gustos.
+
+### 6.2 · Para qué sirven entonces los votos del dataset
+
+| Uso | ¿Sirve? |
+| :-- | :-- |
+| Calidad: promedio bayesiano (R2), valor de `m` (R5), combinación con IMDb (R4), piso `β·WR` (4.3) | **Sí**: los votos siguen a la calidad |
+| Gustos: ajustar `w₁`, `w₂`, `w₃` (R9) y mostrar que el contenido le gana a la popularidad | **No**: no hay gustos que encontrar |
+
+La evaluación propuesta antes (división temporal por usuario, popularidad contra contenido, con precision@10 y NDCG@10) sigue sirviendo para la parte de calidad. Para la parte de gustos daría una conclusión engañosa: la popularidad ganaría, y no porque el contenido sea malo, sino porque estos votos no tienen gustos. Falta definir cómo evaluar los gustos (por ejemplo, con perfiles armados a propósito y revisando a mano lo que se recomienda).
 
 ## 7. Integración con la arquitectura
 
@@ -277,6 +309,6 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 3. Confirmar las filas por género (R6) y no hacer onboarding (R7).
 4. Confirmar que se embebe en paralelo con la limpieza (R17). Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. Vecinos precalculados o producto por petición (R15).
-6. Pesos de las señales (R9), definidos con la evaluación (R13).
+6. Cómo evaluar los gustos (R13) y, con eso, cómo fijar los pesos de las señales (R9): los votos del dataset no sirven para esto (6.1).
 7. Guardar los vectores en un volumen, para que el segundo arranque tarde pocos segundos (ya figura en el README; ver 4.4).
 8. Recalcular los números de la sección 2 sobre la base limpia.
