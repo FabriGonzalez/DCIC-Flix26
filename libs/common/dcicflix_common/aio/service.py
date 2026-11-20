@@ -49,6 +49,7 @@ class DataService:
             on_fatal=on_fatal,
         )
         self._tasks: list[asyncio.Task] = []
+        self._connected = asyncio.Event()
 
     async def start(self) -> None:
         """Arranca la conexión y el monitor en segundo plano: /health responde desde ya."""
@@ -68,12 +69,21 @@ class DataService:
     def health(self) -> tuple[int, dict]:
         return self.monitor.response()
 
+    async def wait_connected(self) -> AbstractRobustConnection:
+        """Espera la primera conexión a Mongo y a Rabbit, y devuelve la de Rabbit.
+
+        Las reconexiones posteriores las hace cada cliente solo (pymongo, connect_robust).
+        """
+        await self._connected.wait()
+        return self.rabbit
+
     async def _connect(self) -> None:
         try:
             await asyncio.gather(mongo.wait_until_ready(self.mongo), self._connect_rabbit())
             # El primer chequeo del monitor corrió con las conexiones a medio abrir:
             # sin esto, /health daría 503 hasta el siguiente, 10 s después.
             await self.monitor.check_once()
+            self._connected.set()
         except Exception as exc:
             # Los errores recuperables se reintentan sin límite: lo que llega acá es irrecuperable.
             self._on_fatal(exc)

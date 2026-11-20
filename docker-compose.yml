@@ -182,6 +182,10 @@ services:
     restart: unless-stopped
     environment:
       <<: [*mongo-env, *rabbit-env, *log-env]
+    volumes:
+      # Embeddings del plot por hash del texto: el segundo arranque no vuelve a embeber.
+      # Solo eso: lo demás depende de los datos limpios y se recalcula al indexar.
+      - recommender-cache:/cache
     networks:
       - internal-net
     depends_on: *data-depends-on
@@ -227,3 +231,4 @@ networks:
 volumes:
   mongo-data:
   rabbitmq-data:
+  recommender-cache:

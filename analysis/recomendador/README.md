@@ -10,6 +10,8 @@ Scripts que respaldan los números de [docs/recomendador.md](../../docs/recomend
 | `votos_sin_gustos.py` | 6.1 | Prueba de dejar una afuera, con votos tal cual y corregidos por calidad | Sí |
 | `vecinos_precalculados.py` | 7.1 | Tiempo por petición: contra todo el catálogo vs. vecinos precalculados | Sí |
 | `pesos.py` | 4.1, 4.3, 6.3 | Calibración, pesos, `β` y `λ` con la prueba de conjuntos escondidos | Sí |
+| `comparar_servicio.py` | 9 | Corre el código del `recommender` con la misma prueba que `pesos.py` y compara: calibración, `WR`, recall@20 y tiempo por petición. Deja `plots.npy` armado desde la caché del servicio | Sí, la `plots.npz` del contenedor |
+| `prueba_api.py` | 9.4, 9.6 | Prueba de punta a punta de la API, desde el contenedor del `backend`: 503 mientras indexa, respuestas con títulos, 404, 422, tiempos por petición, voto nuevo. **Escribe votos de prueba y los borra al terminar** | No: usa el sistema levantado |
 
 En una PC con Windows y 4 CPUs, `embeber.py` tarda ≈ 6 min y `pesos.py` ≈ 1,5 min.
 
@@ -29,9 +31,17 @@ python -m venv .venv-reco
 ```
 
 - `-X utf8` hace falta en Windows, porque los scripts imprimen `β`, `λ` y `≈`.
+- `prueba_api.py` no corre en el host, sino en el contenedor del `backend`, con el sistema levantado y la base limpia. En Git Bash hace falta `MSYS_NO_PATHCONV=1` adelante, para que no convierta `/tmp`:
+  ```sh
+  docker compose cp analysis/recomendador/prueba_api.py backend:/tmp/prueba_api.py
+  docker compose exec backend python3 /tmp/prueba_api.py
+  ```
+- `comparar_servicio.py` necesita la caché del contenedor: `docker cp dcicflix-recommender-1:/cache/plots.npz analysis/recomendador/cache/`.
 - La carpeta `cache/` (modelo y vectores, ≈ 300 MB) no se sube al repo.
 
 ## Limitaciones
 
 - **Dataset crudo:** las copias duplicadas se aproximan quedándose con una por `imdb.id`. Con la base limpia hay que adaptar la lectura y volver a correr `m_y_M.py` y `pesos.py` (pendiente 7 del documento).
 - **Escalas de 4.1:** la tabla de media, desvío y percentil 99 de cada señal se midió sin guardar un script. La calibración que se usa la calcula `pesos.py`.
+- **El "10.º vecino" de `pesos.py` no es exacto:** `np.partition(-x, 10)` deja en orden solo la columna 10, que es el 11.º valor. La columna 9 es alguno de los 10 más altos, no necesariamente el 10.º. El valor exacto es `-np.partition(-x, 9)[:, 9]`. Con el exacto, la escala de personas da 0,193 en vez de 0,195 con la misma muestra, y no cambia ningún resultado. No se corrigió, para no mover los números ya publicados. El servicio usa el exacto, y `comparar_servicio.py` imprime las dos versiones.
+- **`m_y_M.py` imprime el `Q₅` del mejor punto de la grilla** (`M = 0`, con la mitad de los votos), no el del `M = 3.000` decidido. Ese fue el origen del `0,48·Q + 0,18` que tenía el documento (corregido en 3.4).

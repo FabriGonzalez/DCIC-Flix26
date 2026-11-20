@@ -1,2 +1,5 @@
 pytest==8.3.5
 pymongo==4.20.0
+# Tests unitarios del recommender (services/recommender/tests).
+numpy==2.5.5
+scipy==1.18.1

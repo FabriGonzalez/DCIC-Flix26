@@ -42,7 +42,10 @@ pip install -r tests/requirements.txt
 pytest -m static                            # no necesita nada levantado
 docker compose up -d --wait && pytest       # todo menos slow, con el sistema levantado
 pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~2,5 min)
+pytest services/recommender                 # tests unitarios del recommender, aparte (ver abajo)
 ```
+
+Los tests del `recommender` corren en una invocación aparte, con su propio `pytest.ini`: él y el `cleaning-agent` tienen un paquete `app`, y en un mismo proceso de pytest solo se puede importar uno.
 
 La arquitectura esperada (redes, puertos, servicios y qué nombres resuelve y alcanza cada uno) está como datos en [tests/architecture/spec.py](tests/architecture/spec.py), y la topología de RabbitMQ en [topology.py](libs/common/dcicflix_common/topology.py).
 
@@ -195,12 +198,13 @@ La reseña no aparece al instante en la ficha: el `frontend` la muestra como env
 
 Ninguna petición reentrena el modelo ni calcula similitudes contra todo el catálogo.
 
+El `recommender` expone `GET /users/{user_id}/recommendations`, `GET /movies/{movie_id}/similar`, `GET /rankings` y `GET /genres`, todos solo en `internal-net`. Mientras no termina de indexar responden 503. El detalle está en [docs/recomendador.md](docs/recomendador.md), sección 9.4.
+
 ## Pendiente
 
 Decisiones abiertas:
 
 - **LLM:** se asume API externa con API key, a confirmar con la cátedra. Si pasa a ser un modelo local, se agrega un contenedor `ollama` y se elimina `egress-net`.
-- **Algoritmo del recomendador:** la estrategia está decidida y la especificación para implementarlo está en [docs/recomendador.md](docs/recomendador.md), sección 9. Los embeddings se guardan en un volumen para que el segundo arranque no los recalcule.
 - **Lectura de datos sucios:** cómo tolera el `backend` los formatos corruptos mientras dura la limpieza.
 - **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
 
@@ -208,5 +212,5 @@ Secciones a completar con la implementación:
 
 - Estrategia de limpieza y uso del LLM en `cleaning-agent`.
 - Ruta `/audit`: métricas macro y detalle de registros.
-- Estrategia del motor de recomendaciones y justificación del modelo.
+- Estrategia del motor de recomendaciones y justificación del modelo: está completa en [docs/recomendador.md](docs/recomendador.md), con la implementación en la sección 9.6. Falta resumirla acá.
 - Integraciones con LLM en la interfaz (traducción, chat).
