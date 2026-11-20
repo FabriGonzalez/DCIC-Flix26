@@ -22,7 +22,7 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R4 | Combinación votos propios + IMDb | IMDb, con su propio bayesiano, es el punto de partida, y los votos propios lo corrigen (ver [3.3](#33--combinación-con-imdb-r4)) | decidida |
 | R5 | Valores de `m` y `M` | `m = 5` (medido), `M = 3.000` (por criterio); el pasaje a 1–5 se recalcula al indexar | decidida |
 | R6 | Filas por género en la portada | Mismo ranking bayesiano, filtrado por género | decidida |
-| R7 | Onboarding (preguntar gustos al entrar) | Se hace; falta definir qué pregunta y cómo lo usa el recomendador | decidida (diseño abierto) |
+| R7 | Onboarding (preguntar gustos al entrar) | Elegir de 1 a 3 géneros; ordenan la portada y no entran en el puntaje por contenido. El `backend` los guarda y arma la portada (ver 3.5) | decidida |
 | R8 | Usuario con votos | Por contenido, con tres señales: plot, géneros y personas | decidida |
 | R9 | Pesos de las tres señales | Se calibran las escalas y los pesos se eligen con la prueba de conjuntos escondidos (6.3); los votos del dataset no sirven para esto | decidida (valores abiertos) |
 | R16 | Señal faltante en una película | Pesos fijos: el término vale 0 y no se redistribuye | decidida |
@@ -191,7 +191,45 @@ Reemplaza el análisis de 3.2 (`m` entre 5 y 15), que usaba `C` como punto de pa
 ### 3.5 · Presentación (R6, R7)
 
 - **Filas por género (decidida):** en lugar de una sola lista, una fila por género ("Lo mejor en Comedia", "Lo mejor en Acción"), con el mismo ranking filtrado. Da variedad y facilita encontrar algo para votar. Después de la limpieza quedan 25 géneros.
-- **Onboarding (decidido: se hace):** una pantalla inicial para el usuario sin votos que pregunta sus gustos. Falta definir qué pregunta y cómo lo usa el recomendador.
+- **Onboarding (decidido):** ver abajo.
+
+#### Onboarding (R7)
+
+**La pantalla:**
+
+- Aparece cuando entra un usuario sin votos y sin géneros guardados. Se puede saltear, y los géneros se pueden cambiar después desde el perfil.
+- Pide elegir **de 1 a 3 géneros**. Con más, la elección deja de decir algo.
+- Ofrece **22 de los 25 géneros**. Quedan afuera Talk-Show (1 película), News (43) y Short (255), que es un formato (cortometraje) y no dice de qué trata la película. Film-Noir (101) queda adentro.
+
+Películas por género en el crudo, una copia por `imdb.id`:
+
+| Géneros | Películas |
+| :-- | :-- |
+| Drama · Comedy · Romance · Thriller · Crime · Action | 11.232 · 5.755 · 3.133 · 2.349 · 2.335 · 2.239 |
+| Adventure · Documentary · Horror · Biography · Family · Mystery | 1.829 · 1.684 · 1.555 · 1.218 · 1.117 · 1.107 |
+| Fantasy · Sci-Fi · History · Animation · Music · War | 971 · 919 · 835 · 763 · 725 · 665 |
+| Musical · Sport · Western · Film-Noir | 405 · 341 · 247 · 101 |
+| Excluidos: Short · News · Talk-Show | 255 · 43 · 1 |
+
+**Efecto en la portada:**
+
+| Situación | Portada |
+| :-- | :-- |
+| Sin géneros (salteó el onboarding) | Filas por género en el orden por defecto, de los más grandes a los más chicos |
+| Con géneros, sin votos | Primero una fila "Para vos" con lo mejor (`WR`) dentro de sus géneros, y después sus géneros antes que el resto |
+| Con votos | "Recomendadas para vos" pasa a ser por contenido (7.1); sus géneros siguen ordenando las filas |
+
+**Los géneros elegidos no entran en el puntaje por contenido:** el gusto lo dan los votos (4.2). Los géneros solo ordenan qué se muestra primero.
+
+**El recomendador no se entera de los géneros elegidos.** Devuelve el ranking `WR` de cada género, como ya estaba previsto (R6, R18). El `backend`:
+
+- guarda los géneros del usuario en MongoDB (una colección nueva, por ejemplo `preferences`: `{user_id, genres}`);
+- ordena las filas;
+- arma "Para vos" juntando las listas de los géneros elegidos, sacando las repetidas y ordenando por `WR`. Si cada lista trae las 20 mejores de su género con su `WR`, las 20 mejores de la unión están seguro entre ellas, así que el resultado es exacto.
+
+Así, el orden de la portada, que es presentación, queda en el `backend`, y el recomendador no depende de una colección ajena. Descartado: que el `backend` le pase los géneros al recomendador en cada petición, o que el recomendador los lea de MongoDB. Solo harían falta si los géneros entraran en el puntaje por contenido.
+
+**Para acordar con el grupo:** la pantalla (`frontend`), y guardar los géneros y armar la portada (`backend`). No afecta el contrato de datos de la limpieza.
 
 ## 4. Usuario con votos: por contenido (R8)
 
@@ -460,7 +498,7 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 
 1. ~~Combinación con IMDb (R4)~~: decidida en 3.3.
 2. ~~Valores de `m` y `M` (R5)~~: decididos en 3.4. `k = 5` (R10).
-3. Diseño del onboarding (R7). ~~Filas por género (R6)~~: decididas.
+3. ~~Onboarding (R7) y filas por género (R6)~~: decididos en 3.5. Falta acordar con el grupo la parte del `frontend` y del `backend`.
 4. ~~Embeber en paralelo con la limpieza (R17)~~: decidido. Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. ~~Vecinos precalculados o producto por petición (R15)~~: vecinos precalculados, en 7.1. El `WR` se recalcula cada 60 s (R18, 7.2).
 6. Cómo calibrar las señales y los valores de los pesos (R9), elegidos con la prueba de conjuntos escondidos (6.3).
