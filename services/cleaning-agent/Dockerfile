@@ -11,6 +11,7 @@ WORKDIR /app
 COPY libs/common /libs/common
 RUN pip install "/libs/common[sync]"
 
+COPY services/cleaning-agent/app ./app
 COPY services/cleaning-agent/main.py .
 
 USER nobody
