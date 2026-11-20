@@ -33,7 +33,7 @@ log = logging.getLogger(SERVICE)
 
 def create_app(on_fatal) -> FastAPI:
     data = DataService(SERVICE, on_fatal=on_fatal)
-    recommender = Recommender(data.mongo, on_fatal=on_fatal)
+    recommender = Recommender(data, on_fatal=on_fatal)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
