@@ -24,7 +24,7 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R6 | Filas por género en la portada | Mismo ranking bayesiano, filtrado por género | decidida |
 | R7 | Onboarding (preguntar gustos al entrar) | Elegir de 1 a 3 géneros; ordenan la portada y no entran en el puntaje por contenido. El `backend` los guarda y arma la portada (ver 3.5) | decidida |
 | R8 | Usuario con votos | Por contenido, con tres señales: plot, géneros y personas | decidida |
-| R9 | Pesos de las tres señales | Se calibran las escalas y los pesos se eligen con la prueba de conjuntos escondidos (6.3); los votos del dataset no sirven para esto | decidida (valores abiertos) |
+| R9 | Pesos de las tres señales | Cada señal se calibra por su 10.º vecino típico; pesos plot 0,2 · géneros 0,4 · personas 0,4, elegidos con la prueba de conjuntos escondidos y con un mínimo para el plot (ver 6.3) | decidida |
 | R16 | Señal faltante en una película | Pesos fijos: el término vale 0 y no se redistribuye | decidida |
 | R10 | Perfil del usuario | Suma de vectores ponderada por `estrellas − punto medio`, con `k = 5` para el punto medio | propuesta (`k` decidido) |
 | R11 | Filtrado colaborativo | No se usa: no hay votos suficientes | descartada |
@@ -34,6 +34,7 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R15 | Cálculo por petición | Vecinos precalculados: 100 por película al indexar; la petición solo lee y suma (ver 7.1) | decidida |
 | R17 | Cuándo se embebe | Al arrancar, en paralelo con la limpieza, con el hash del plot como clave | decidida |
 | R18 | Actualización del `WR` | Se recalcula en segundo plano cada 60 s, fuera de las peticiones | decidida |
+| R19 | Ajuste final de la lista | Piso de calidad `β = 0,2` y diversidad MMR con `λ = 0,8` (ver 4.3 y 6.3) | decidida |
 
 ## 2. Datos disponibles
 
@@ -258,7 +259,13 @@ La misma similitud sirve para "Películas similares".
 - **Géneros varía tres veces más que el plot:** con pesos iguales, el orden lo decidirían casi solo los géneros, y compartir "Drama" pesaría más que tener una trama casi idéntica.
 - **Personas es un bonus ocasional:** vale 0 casi siempre, pero cuando coincide salta mucho.
 
-Por eso, primero se **calibra** cada señal a una escala comparable (por ejemplo, plot y géneros divididos por su desvío, y un tope al aporte de personas para que una coincidencia no tape lo demás) y recién después se eligen los pesos. Para empezar: plot > personas > géneros, porque el plot es la señal más rica y la única que generaliza. Los valores finales salen de la prueba de conjuntos escondidos (6.3).
+Por eso, primero se **calibra** cada señal a una escala comparable y recién después se eligen los pesos:
+
+- **Calibración:** cada señal se divide por el valor típico (mediana) de la similitud con la 10.ª película más parecida según esa señal, o sea, por "cuánto vale un buen vecino". Medido en el crudo: plot 0,461, géneros 1,000 y personas 0,195. Así, un 1 significa lo mismo en las tres señales.
+- **Tope a personas:** después de calibrar, su aporte se corta en 2, para que compartir a alguien muy raro no tape lo demás.
+- **Pesos (decididos):** `w₁ = 0,2` (plot), `w₂ = 0,4` (géneros) y `w₃ = 0,4` (personas). Salen de la prueba de conjuntos escondidos, con un mínimo para el plot. El motivo está en 6.3.
+
+La idea inicial era plot > personas > géneros. La prueba no la confirmó, pero tampoco puede medir lo que mejor hace el plot (ver 6.3).
 
 **Plot:**
 
@@ -330,10 +337,12 @@ Al usuario nuevo el primer voto ya le arma el perfil; al generoso, un 4 le cuent
 
 **El gusto lo ponen los votos del usuario:** el plot, los géneros y las personas son el idioma en que se expresa, y los votos deciden hacia dónde apunta el perfil. Dos usuarios que votan distinto reciben recomendaciones distintas. Los votos de los demás usuarios no cambian las recomendaciones de uno, salvo por el piso de calidad (4.3).
 
-### 4.3 · Ajuste final de la lista (propuesta)
+### 4.3 · Ajuste final de la lista (R19)
 
-- **Piso de calidad:** sumar un término `β·WR` al puntaje, para que la cercanía al perfil no saque películas malas.
-- **Diversidad (MMR):** penalizar candidatos muy parecidos a los ya elegidos, para no devolver diez películas casi iguales.
+- **Piso de calidad, `β = 0,2`:** al puntaje se le suma `β·WR`, con el `WR` estandarizado (restada la media del catálogo y dividido por su desvío, 0,37 estrellas). Cada desvío de calidad vale 0,2 puntos de parecido calibrado. Así la cercanía al perfil no saca películas malas: con `β = 0`, lo recomendado tiene un `WR` promedio de 3,37, casi el del catálogo (3,41); con `β = 0,2`, 3,64.
+- **Diversidad (MMR), `λ = 0,8`:** las recomendaciones se eligen de a una. Cada candidata vale `λ·puntaje − (1 − λ)·(su mayor similitud con las ya elegidas)`. Los dos términos se normalizan a 0–1, y la similitud es la misma de 4.1. Evita devolver diez películas casi iguales, por ejemplo tres secuelas seguidas de la misma saga.
+
+Los dos valores salen de la prueba de conjuntos escondidos (6.3).
 
 ### 4.4 · Embeddings del plot (R14, R17)
 
@@ -379,7 +388,7 @@ El filtrado colaborativo recomienda según quién votó qué, sin mirar el conte
 
 Con estos datos, el colaborativo no aporta información que no dé el contenido, y agrega un modelo más para entrenar y mantener. Por eso se descarta, y con él el híbrido contenido + colaborativo. El híbrido que queda es contenido + calidad (4.3).
 
-## 6. Evaluación (R13, abierta)
+## 6. Evaluación (R13)
 
 ### 6.1 · Los votos del dataset no reflejan gustos
 
@@ -423,9 +432,68 @@ Como los votos del dataset no tienen gustos, se arman casos donde se sabe de ant
 3. Se mide qué parte del resto del conjunto aparece en sus 20 primeras recomendaciones (recall@20).
 4. Se repite con muchos conjuntos y con distintas combinaciones de pesos (R9). Se eligen los pesos que mejor dan en todos los tipos de conjunto.
 
-**Se mezclan varios tipos de conjunto,** porque cada uno favorece a una señal: las películas de un mismo director favorecen a personas, las sagas favorecen al plot, y las combinaciones de géneros favorecen a géneros. Con un solo tipo, la prueba elegiría siempre los pesos de esa señal.
+**Se mezclan varios tipos de conjunto,** porque cada uno favorece a una señal. Con un solo tipo, la prueba elegiría siempre los pesos de esa señal. Se usaron tres:
+
+| Tipo | Cómo se arma | Conjuntos |
+| :-- | :-- | --: |
+| Director | Películas del mismo primer director, si tiene 6 o más | 200 (de 647) |
+| Saga | Títulos con la misma base (*X-Men*, *X-Men 2*, *X-Men: First Class*…) | 51 |
+| Géneros | Películas con la misma combinación de 3 o más géneros, si son entre 6 y 40 | 161 |
 
 **Limitación:** mide coherencia (que recomiende "lo del mismo tipo"), no si a una persona le gusta lo recomendado. Es lo más cercano que se puede medir sin usuarios reales.
+
+#### Resultados
+
+Medido sobre el crudo sin copias duplicadas (19.145 películas). Cada usuario ficticio vota 3 películas al azar de su conjunto, y se recomienda con los vecinos precalculados (7.1). La prueba completa tarda alrededor de un minuto.
+
+**1. Pesos (sin `β` ni MMR).** Se probó toda la grilla de pesos con paso 0,1:
+
+| Pesos (plot · géneros · personas) | Recall@20 | Director | Saga | Géneros |
+| :-- | --: | --: | --: | --: |
+| 0,1 · 0,4 · 0,5 (el mejor de la grilla) | 94,9 % | 95,4 | 93,0 | 96,2 |
+| 0,0 · 0,5 · 0,5 | 94,6 % | 92,2 | 92,2 | 99,4 |
+| **0,2 · 0,4 · 0,4 (elegido)** | **89,0 %** | 88,2 | 93,0 | 85,8 |
+| ⅓ · ⅓ · ⅓ | 75,0 % | 79,7 | 92,4 | 52,7 |
+| Solo personas | 63,9 % | 99,3 | 88,0 | 4,5 |
+| Solo géneros | 39,7 % | 1,5 | 17,6 | 100 |
+| Solo plot | 26,3 % | 2,5 | 72,8 | 3,5 |
+
+**Por qué se eligió 0,2 · 0,4 · 0,4 y no el mejor de la grilla:**
+
+- **La prueba no puede medir lo que mejor hace el plot.** Los conjuntos "director" se definen con el campo `directors`, así que los encuentra la señal de personas (99 %). Los conjuntos "géneros" se definen con `genres`, así que los encuentra la señal de géneros (100 %). Ningún tipo de conjunto se define por **de qué trata** la película, por ejemplo "películas de atracos" de gente distinta y con géneros distintos. Eso es justo lo que aporta el plot, y es la única señal que generaliza (4.1).
+- **No se puede armar ese tipo de conjunto sin trampa.** El dataset no trae nada que diga "estas dos tratan del mismo tema" salvo el propio plot, y usarlo para armar la prueba la haría a favor del plot.
+- **Por eso al plot se le aplica el mismo criterio que a `β` y a `λ`:** el mayor peso que conserve al menos el 90 % del recall máximo (≥ 85,4 %). Es 0,2: la mejor combinación con ese peso es 0,2 · 0,4 · 0,4, con 89,0 %. Con plot 0,3 la mejor combinación llega solo al 78,1 % (0,3 · 0,4 · 0,3), y con 0,4, al 68,7 %.
+- **Aun así el plot hace falta:** solo, recupera el 72,8 % de las sagas, casi sin ayuda de géneros. Y es la única señal de las 7 películas sin géneros ni personas compartidas (4.1).
+
+**2. Piso de calidad `β`, con los pesos elegidos y sin MMR.** Se eligió el mayor `β` que conserva al menos el 90 % del recall sin `β` (≥ 80,1 %):
+
+| `β` | Recall@20 | `WR` promedio de lo recomendado |
+| --: | --: | --: |
+| 0 | 89,0 % | 3,37 |
+| 0,1 | 87,7 % | 3,54 |
+| **0,2** | **85,1 %** | **3,64** |
+| 0,3 | 79,9 % | 3,74 |
+| 0,5 | 68,6 % | 3,86 |
+
+El "`WR` promedio de lo recomendado" es el promedio del `WR` de las 20 recomendaciones: mide qué tan buenas son en general (el catálogo promedia 3,41). `β = 0,2` sube la calidad de lo recomendado de 3,37 a 3,64 y pierde 3,9 puntos de recall. `β = 0,3` ya no llega al 90 %.
+
+**3. Diversidad (MMR), con los pesos elegidos y `β = 0,2`:**
+
+| `λ` | Recall@20 | Similitud interna de la lista |
+| --: | --: | --: |
+| 1,0 (sin MMR) | 85,1 % | 0,218 |
+| 0,9 | 84,8 % | 0,217 |
+| **0,8** | **83,5 %** | **0,215** |
+| 0,7 | 81,6 % | 0,211 |
+| 0,6 | 80,8 % | 0,204 |
+
+La "similitud interna" es el coseno promedio entre los plots de los 190 pares de películas de la lista de 20. Más bajo significa una lista más variada.
+
+**Por qué se eligió `λ = 0,8`:** el criterio del 90 % habría permitido bajar hasta 0,6. Pero con estos números la diversidad que se gana es chica (0,218 → 0,204) y el recall cae 4,3 puntos. Con 0,8 se pierden 1,6 puntos y MMR queda como protección para los casos que la prueba no mide, como un usuario que vota varias películas de una misma saga.
+
+**Ojo con la medida de diversidad:** la similitud interna se midió solo con el plot, mientras que MMR penaliza con la similitud combinada (4.1). Si MMR evita sobre todo "otra más del mismo director", esta medida no lo ve y su beneficio puede estar subestimado.
+
+**Resultado final: `w = (0,2 · 0,4 · 0,4)`, `β = 0,2`, `λ = 0,8`, con recall@20 de 83,5 %.**
 
 La prueba también imprime algunas listas de ejemplo ("votó 3 de un director → recomienda esto"), que sirven para el informe sin trabajo extra.
 
@@ -501,6 +569,6 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 3. ~~Onboarding (R7) y filas por género (R6)~~: decididos en 3.5. Falta acordar con el grupo la parte del `frontend` y del `backend`.
 4. ~~Embeber en paralelo con la limpieza (R17)~~: decidido. Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. ~~Vecinos precalculados o producto por petición (R15)~~: vecinos precalculados, en 7.1. El `WR` se recalcula cada 60 s (R18, 7.2).
-6. Cómo calibrar las señales y los valores de los pesos (R9), elegidos con la prueba de conjuntos escondidos (6.3).
+6. ~~Calibración y pesos (R9), `β` y `λ` (R19)~~: decididos en 4.1, 4.3 y 6.3.
 7. Guardar los vectores en un volumen, para que el segundo arranque tarde pocos segundos (ya figura en el README; ver 4.4).
-8. Recalcular los números de la sección 2 sobre la base limpia.
+8. Recalcular sobre la base limpia los números de la sección 2 y la prueba de conjuntos escondidos (6.3). No deberían moverse mucho; si se mueven, se revisan los valores.
