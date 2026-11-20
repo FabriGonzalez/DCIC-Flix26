@@ -31,8 +31,9 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R12 | Híbrido contenido + colaborativo | No aplica, por R11 | descartada |
 | R13 | Evaluación | Calidad: con los votos del dataset. Gustos: prueba automática de conjuntos escondidos, sin intervención humana | decidida |
 | R14 | Modelo de embeddings del plot | Local, dentro del contenedor: se descarga en el build y embebe al arrancar | decidida |
-| R15 | Cálculo por petición | Vecinos precalculados, o producto contra todo el catálogo | abierta |
+| R15 | Cálculo por petición | Vecinos precalculados: 100 por película al indexar; la petición solo lee y suma (ver 7.1) | decidida |
 | R17 | Cuándo se embebe | Al arrancar, en paralelo con la limpieza, con el hash del plot como clave | propuesta |
+| R18 | Actualización del `WR` | Se recalcula en segundo plano cada 60 s, fuera de las peticiones | decidida |
 
 ## 2. Datos disponibles
 
@@ -257,7 +258,7 @@ Alternativas descartadas:
 | Imputar el valor típico de la señal | Para personas da lo mismo que pesos fijos (el valor típico es ≈ 0) |
 | Coseno sobre el vector concatenado | Renormaliza a medias, sin control explícito |
 
-En "Películas similares a A", si a A le falta una señal, el término es igual contra todas las candidatas y el orden no cambia: la regla solo importa cuando la que no tiene la señal es la candidata. Pesos fijos también permite calcular el puntaje como un solo producto de matrices (R15). Si la evaluación (R13) mostrara que renormalizar da mejor NDCG, se revisa.
+En "Películas similares a A", si a A le falta una señal, el término es igual contra todas las candidatas y el orden no cambia: la regla solo importa cuando la que no tiene la señal es la candidata. Pesos fijos también permite calcular los vecinos de cada película como un solo producto de matrices al indexar (R15). Si la evaluación (R13) mostrara que renormalizar da mejor NDCG, se revisa.
 
 ### 4.2 · Perfil del usuario (R10)
 
@@ -287,7 +288,7 @@ Al usuario nuevo el primer voto ya le arma el perfil; al generoso, un 4 le cuent
 
 **Descartado:** usar como punto medio lo esperable para cada película (`Q₅`, como en la prueba B de 6.1). Un 4 a *The Godfather* daría peso negativo, y el perfil se alejaría de una película que al usuario le gustó.
 
-Se recomiendan las películas más cercanas al perfil (por coseno), excluyendo las que ya votó.
+**Cómo se calcula (R15):** el perfil no se arma como un vector. Cada voto aporta `peso × similitud` a los vecinos precalculados de esa película, y se recomiendan las candidatas con mayor suma, excluyendo las que ya votó (ver 7.1). Los pesos son los de la tabla de arriba.
 
 **El gusto lo ponen los votos del usuario:** el plot, los géneros y las personas son el idioma en que se expresa, y los votos deciden hacia dónde apunta el perfil. Dos usuarios que votan distinto reciben recomendaciones distintas. Los votos de los demás usuarios no cambian las recomendaciones de uno, salvo por el piso de calidad (4.3).
 
@@ -399,12 +400,48 @@ La prueba también imprime algunas listas de ejemplo ("votó 3 de un director �
   - Todo voto activo apunta a una película activa.
   - `directors`, `cast` y `writers` que faltan se tratan como listas vacías.
   - El `plot` se puede embeber antes de que termine la limpieza (R17).
-- **Votos nuevos:** llegan a MongoDB por `ingest-consumer`. Como el perfil (4.2) es una suma, se puede armar en cada petición, leyendo los votos del usuario con una consulta indexada por `user_id`, sin reentrenar.
-- **Cálculo por petición (R15):** el README pide que ninguna petición calcule similitudes contra todo el catálogo. Hay dos opciones:
-  - Precalcular los ~50 vecinos más cercanos de cada película y armar la recomendación juntando los vecinos de lo que el usuario votó bien. Respeta la regla.
-  - Relajar la regla: el producto del perfil contra una matriz de 20.000 × 384 tarda pocos milisegundos y entra en el objetivo de < 100 ms.
-  
-  Una matriz de similitud completa (20.000 × 20.000) no entra: ocupa unos 1,6 GB.
+- **Votos nuevos:** llegan a MongoDB por `ingest-consumer`. En cada petición se leen los votos del usuario con una consulta indexada por `user_id`, así que un voto propio se refleja en la siguiente petición, sin reentrenar.
+
+### 7.1 · Vecinos precalculados (R15)
+
+El enunciado de la cátedra pide que ninguna petición calcule similitudes contra todo el catálogo (README, "Recomendaciones"). Por eso, la similitud contra todo el catálogo se calcula **una sola vez, al indexar**, y la petición solo lee lo guardado.
+
+| Momento | Qué se hace |
+| :-- | :-- |
+| **Al indexar** (al recibir `data.cleaned`) | Para cada película, se calcula su similitud (4.1) contra todo el catálogo y se guardan sus **100** más parecidas con el puntaje. Se guardan en el volumen, junto con los embeddings. Dependen solo del contenido: los votos nuevos no los cambian |
+| **"Recomendadas para vos"** | Se leen las listas de las películas que votó el usuario. Cada candidata suma `peso del voto × puntaje guardado` por cada lista en la que aparece. Se suma `β·WR`, se aplica MMR entre las candidatas y se devuelven las primeras |
+| **"Películas similares"** | La lista guardada de esa película, reordenada con `β·WR` y MMR |
+
+**Ejemplo** (puntajes ilustrativos): con *Heat* a 5 ★ (peso +2), *Ocean's Eleven* a 4 ★ (+1) y *Titanic* a 1 ★ (−2), *The Town* aparece en las listas de *Heat* (0,55) y de *Ocean's Eleven* (0,40) y suma 2·0,55 + 1·0,40 = 1,50. *Ronin*, solo en la de *Heat* (0,62), suma 1,24. *The Notebook*, en la de *Titanic* (0,65), suma −1,30 y se descarta.
+
+**Casos especiales:**
+
+- **Solo votos negativos** (o ningún voto por encima del punto medio): se muestra el ranking de usuario nuevo (3), sin lo que votó y sin los vecinos de lo que no le gustó.
+- **Menos de 10 candidatas positivas:** se completa con el ranking de usuario nuevo.
+- **MMR:** se calcula solo entre las candidatas (≈ 200), no contra el catálogo.
+
+**Medido** (PC con Windows, 4 CPUs; 300 usuarios reales del dataset, mediana de 25 votos):
+
+| | Producto contra todo el catálogo | Vecinos precalculados |
+| :-- | --: | --: |
+| "Recomendadas para vos", mediana / p95 | 11 / 30 ms | 8 / 19 ms |
+| Costo extra al indexar | — | ≈ 15 s; 16 MB con K = 100 |
+
+Los dos entran en el objetivo de < 100 ms; lo que decide es la regla del enunciado. Una matriz de similitud completa (20.000 × 20.000) no entraría en memoria: ocupa unos 1,6 GB.
+
+**Diferencia con comparar contra todo el catálogo:** las parejas que no están en ninguna lista cuentan 0. Por eso:
+
+- se recomienda lo que se parece **mucho a alguna** película votada, no lo que se parece **un poco a todas**;
+- un voto negativo solo hunde a sus vecinos, no aleja de un estilo en general;
+- se puede explicar en la interfaz: "porque te gustó *Heat*".
+
+Con la misma fórmula y sin `β`, el top 10 coincide en un 99,9 % con un solo voto, y en un 12 % con todos los votos del usuario. Subir K de 50 a 200 casi no cambia esa coincidencia: la diferencia viene de lo que mide cada método, no de que falten candidatas. Con K = 50 ya hay una mediana de 634 candidatas por usuario; 100 deja margen sin costo apreciable.
+
+### 7.2 · Actualización del `WR` (R18)
+
+El ranking de usuario nuevo y el piso `β·WR` dependen de los votos de todos. Si se calcularan una sola vez al indexar, los votos nuevos no moverían la portada, y ese era el motivo para combinar con IMDb (R4). Recalcularlo en cada petición iría contra la regla.
+
+**Decisión:** se recalcula en segundo plano cada 60 segundos, agregando los votos activos en MongoDB (≈ 60.000), fuera de toda petición. Un voto nuevo se refleja en la portada en menos de un minuto.
 
 ## 8. Campos que usa el recomendador
 
@@ -423,7 +460,7 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 2. ~~Valores de `m` y `M` (R5)~~: decididos en 3.4. `k = 5` (R10).
 3. Confirmar las filas por género (R6) y no hacer onboarding (R7).
 4. Confirmar que se embebe en paralelo con la limpieza (R17). Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
-5. Vecinos precalculados o producto por petición (R15).
+5. ~~Vecinos precalculados o producto por petición (R15)~~: vecinos precalculados, en 7.1. El `WR` se recalcula cada 60 s (R18, 7.2).
 6. Cómo calibrar las señales y los valores de los pesos (R9), elegidos con la prueba de conjuntos escondidos (6.3).
 7. Guardar los vectores en un volumen, para que el segundo arranque tarde pocos segundos (ya figura en el README; ver 4.4).
 8. Recalcular los números de la sección 2 sobre la base limpia.
