@@ -250,7 +250,7 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 | :-- | :-- | :-- |
 | `rating` | `int` 1–5 | Puede venir del texto (regex o LLM); el origen queda en la auditoría. |
 | `date` | `Date` o `null` | `null` si la fecha original era imposible o desconocida. |
-| `datePrecision` | `"day"` o `"year"` | `"year"` para las `circa`: el frontend muestra solo el año. |
+| `datePrecision` | `"day"`, `"year"` o `null` | `"year"` para las `circa`: el frontend muestra solo el año. `null` si y solo si `date` es `null`. |
 | comentario oculto | marca a nivel comentario | Distinta del soft delete: el voto sigue contando. |
 | unicidad | — | Como máximo un voto visible por usuario y película. |
 
