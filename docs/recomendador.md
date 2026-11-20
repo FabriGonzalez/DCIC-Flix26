@@ -21,8 +21,8 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R3 | Fuentes del ranking | Votos propios e `imdb.rating` | decidida |
 | R4 | Combinación votos propios + IMDb | IMDb, con su propio bayesiano, es el punto de partida, y los votos propios lo corrigen (ver [3.3](#33--combinación-con-imdb-r4)) | decidida |
 | R5 | Valores de `m` y `M` | `m = 5` (medido), `M = 3.000` (por criterio); el pasaje a 1–5 se recalcula al indexar | decidida |
-| R6 | Filas por género en la portada | Mismo ranking bayesiano, filtrado por género | propuesta |
-| R7 | Onboarding (preguntar gustos al entrar) | No hacerlo: en la demo, los votos cumplen ese papel | propuesta |
+| R6 | Filas por género en la portada | Mismo ranking bayesiano, filtrado por género | decidida |
+| R7 | Onboarding (preguntar gustos al entrar) | Se hace; falta definir qué pregunta y cómo lo usa el recomendador | decidida (diseño abierto) |
 | R8 | Usuario con votos | Por contenido, con tres señales: plot, géneros y personas | decidida |
 | R9 | Pesos de las tres señales | Se calibran las escalas y los pesos se eligen con la prueba de conjuntos escondidos (6.3); los votos del dataset no sirven para esto | decidida (valores abiertos) |
 | R16 | Señal faltante en una película | Pesos fijos: el término vale 0 y no se redistribuye | decidida |
@@ -32,7 +32,7 @@ Entrena o indexa al recibir `data.cleaned` y responde desde estructuras en memor
 | R13 | Evaluación | Calidad: con los votos del dataset. Gustos: prueba automática de conjuntos escondidos, sin intervención humana | decidida |
 | R14 | Modelo de embeddings del plot | Local, dentro del contenedor: se descarga en el build y embebe al arrancar | decidida |
 | R15 | Cálculo por petición | Vecinos precalculados: 100 por película al indexar; la petición solo lee y suma (ver 7.1) | decidida |
-| R17 | Cuándo se embebe | Al arrancar, en paralelo con la limpieza, con el hash del plot como clave | propuesta |
+| R17 | Cuándo se embebe | Al arrancar, en paralelo con la limpieza, con el hash del plot como clave | decidida |
 | R18 | Actualización del `WR` | Se recalcula en segundo plano cada 60 s, fuera de las peticiones | decidida |
 
 ## 2. Datos disponibles
@@ -190,8 +190,8 @@ Reemplaza el análisis de 3.2 (`m` entre 5 y 15), que usaba `C` como punto de pa
 
 ### 3.5 · Presentación (R6, R7)
 
-- **Filas por género (propuesta):** en lugar de una sola lista, una fila por género ("Lo mejor en Comedia", "Lo mejor en Acción"), con el mismo ranking filtrado. Da variedad y facilita encontrar algo para votar. Después de la limpieza quedan 25 géneros.
-- **Onboarding (propuesta: no hacerlo):** sería una pantalla inicial que pide géneros favoritos o unos votos. En la demo, los profesores eligen un usuario nuevo y votan, y eso ya cumple ese papel.
+- **Filas por género (decidida):** en lugar de una sola lista, una fila por género ("Lo mejor en Comedia", "Lo mejor en Acción"), con el mismo ranking filtrado. Da variedad y facilita encontrar algo para votar. Después de la limpieza quedan 25 géneros.
+- **Onboarding (decidido: se hace):** una pantalla inicial para el usuario sin votos que pregunta sus gustos. Falta definir qué pregunta y cómo lo usa el recomendador.
 
 ## 4. Usuario con votos: por contenido (R8)
 
@@ -313,7 +313,9 @@ Medido en una PC con Windows y 4 CPUs, con `fastembed` (ONNX, sin torch) y `sent
 
 **Restricción:** el profesor tiene que poder probar la app en unos 10 minutos desde cero, y el build con la carga del dataset ya tarda 264 s (esqueleto, F7). Los 6 minutos de embeddings no entran si se hacen después de la limpieza.
 
-**Propuesta (R17): embeber en paralelo con la limpieza.**
+**Decisión (R17): embeber en paralelo con la limpieza.**
+
+No cambia el resultado: el vector de un plot es `f(texto)` y no depende de los demás plots ni de cuántas películas haya, así que embeber todas las copias o solo las activas da los mismos vectores para las activas. Lo que sí depende del conjunto de películas (TF-IDF de personas, vecinos, `WR`) se calcula después de `data.cleaned`, solo con las activas.
 
 - Al arrancar, el `recommender` lee los `plot` crudos y los embebe sin esperar `data.cleaned`. Puede hacerlo porque la limpieza no modifica `plot`: no hay ninguna regla sobre ese campo (ANOMALIAS, sección 6).
 - **La clave es un hash del texto, no el `_id`.** Al fusionar duplicados, cada campo se toma de la copia más reciente que lo tenga válido (ANOMALIAS, A5), así que el `plot` de la ganadora puede venir de una copia perdedora. Pasa en 2 de los 651 grupos (*Little Fugitive*, *The Personals*). Como se embeben los plots de todas las copias, el plot ganador siempre está.
@@ -458,8 +460,8 @@ Para el recomendador, `tomatoes` puede quedar sin corregir. La ficha puede neces
 
 1. ~~Combinación con IMDb (R4)~~: decidida en 3.3.
 2. ~~Valores de `m` y `M` (R5)~~: decididos en 3.4. `k = 5` (R10).
-3. Confirmar las filas por género (R6) y no hacer onboarding (R7).
-4. Confirmar que se embebe en paralelo con la limpieza (R17). Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
+3. Diseño del onboarding (R7). ~~Filas por género (R6)~~: decididas.
+4. ~~Embeber en paralelo con la limpieza (R17)~~: decidido. Saber cuánto tarda la limpieza queda como sugerencia para el `cleaning-agent` (ANOMALIAS, pendiente 4).
 5. ~~Vecinos precalculados o producto por petición (R15)~~: vecinos precalculados, en 7.1. El `WR` se recalcula cada 60 s (R18, 7.2).
 6. Cómo calibrar las señales y los valores de los pesos (R9), elegidos con la prueba de conjuntos escondidos (6.3).
 7. Guardar los vectores en un volumen, para que el segundo arranque tarde pocos segundos (ya figura en el README; ver 4.4).
