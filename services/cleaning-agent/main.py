@@ -76,10 +76,10 @@ def publishDataCleaned(connection: pika.BlockingConnection, state: dict) -> None
     channel.close()
 
 
-def setup(mongoClient: MongoClient) -> worker.Tick:
+def setup(mongoClient: MongoClient) -> worker.Hooks:
     job = CleaningJob(mongoClient[MongoSettings.from_env().db])
     job.thread.start()
-    return job.tick
+    return worker.Hooks(tick=job.tick)
 
 
 if __name__ == "__main__":

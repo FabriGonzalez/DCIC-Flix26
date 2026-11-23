@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-LABEL = "dcicflix.test=cleaning-agent-mongo"
+LABEL = "dcicflix.test=mongo"
 IMAGE = "mongo:8.0"
 
 

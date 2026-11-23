@@ -41,7 +41,7 @@ python -m venv .venv                        # Python 3.12
 pip install -r tests/requirements.txt
 pytest -m static                            # no necesita nada levantado
 docker compose up -d --wait && pytest       # todo menos slow, con el sistema levantado
-pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~2,5 min)
+pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~5 min)
 pytest services/recommender                 # tests unitarios del recommender, aparte (ver abajo)
 ```
 
@@ -184,9 +184,11 @@ El detalle y las alternativas descartadas están en [ANOMALIAS.md](analysis/ANOM
 
 1. El `frontend` envía usuario, película, estrellas y texto al `backend`.
 2. El `backend` valida el formato y que el estado sea `ready`; si no lo es, rechaza la petición.
-3. El `backend` publica el mensaje en `interactions` y responde "aceptado" sin esperar a MongoDB.
-4. `ingest-consumer` toma el mensaje y lo guarda, reemplazando el voto previo del mismo usuario para esa película. Recién entonces confirma el mensaje.
-5. Si falla al guardar, el mensaje se deriva a una cola de errores en lugar de perderse.
+3. El `backend` publica el mensaje en `interactions`, con solo el `user_id` del usuario, y responde "aceptado" sin esperar a MongoDB.
+4. `ingest-consumer` toma el mensaje, lo guarda reemplazando el voto previo del mismo usuario para esa película y actualiza el contador de reseñas. Recién entonces confirma el mensaje.
+5. Si el mensaje no se puede guardar (formato inválido, película inexistente o un error inesperado), se deriva a `interactions.errors` y la cola sigue. Si el problema es que MongoDB no responde, el mensaje espera y se reintenta.
+
+RabbitMQ puede entregar el mismo voto más de una vez, por ejemplo si el consumer se cae entre guardar y confirmar. Guardarlo otra vez no cambia nada. Las decisiones y las pruebas de fallas están en [docs/ingest-consumer.md](docs/ingest-consumer.md).
 
 La reseña no aparece al instante en la ficha: el `frontend` la muestra como enviada hasta la próxima lectura.
 
@@ -218,6 +220,11 @@ Decisiones abiertas:
 - **LLM:** se asume API externa con API key, a confirmar con la cátedra. Si pasa a ser un modelo local, se agrega un contenedor `ollama` y se elimina `egress-net`.
 - **Lectura de datos sucios:** cómo tolera el `backend` los formatos corruptos mientras dura la limpieza.
 - **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
+
+Para el `backend`:
+
+- **Colección `users`** (acordada el 2026-11-23, sin implementar): un documento por usuario con su `user_id`, nombre y email. Los mensajes de `interactions` llevan solo `user_id`, así que **las reseñas nuevas no tienen `user_name` ni `user_email`**: el `backend` los resuelve por `user_id` al leer. Tiene que incluir los 2.000 usuarios del dataset, cuyos datos hoy están solo en `reviews`, y los usuarios nuevos precargados, que no tienen ninguna reseña. Falta definir quién la carga y cuándo.
+- **Publicar los votos** con `Interaction` y `encode` de [interactions.py](libs/common/dcicflix_common/interactions.py), que define y valida el formato. Un `InvalidInteraction` al construirlo corresponde a una petición inválida. `votedAt` es la hora del `backend`, no la del navegador.
 
 Secciones a completar con la implementación:
 

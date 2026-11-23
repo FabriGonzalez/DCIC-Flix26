@@ -11,6 +11,7 @@ WORKDIR /app
 COPY libs/common /libs/common
 RUN pip install "/libs/common[sync]"
 
+COPY services/ingest-consumer/ingest ./ingest
 COPY services/ingest-consumer/main.py .
 
 USER nobody

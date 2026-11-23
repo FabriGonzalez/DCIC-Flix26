@@ -13,6 +13,7 @@ import pytest
 
 import compose
 import spec
+import votes
 from dcicflix_common import topology
 
 pytestmark = pytest.mark.slow
@@ -209,3 +210,73 @@ def test_los_servicios_se_reconectan_solos(sistema_sano):
     assert after["topology-init"]["State"]["StartedAt"] == before["topology-init"]["State"]["StartedAt"]
     code, _content_type, body = compose.get_from_frontend("/api/health")
     assert code == 200, body
+
+
+# --- Votos (docs/ingest-consumer.md): ninguno se pierde ni se guarda dos veces
+
+
+@pytest.fixture
+def voter(sistema_sano):
+    voter = votes.Voter()
+    yield voter
+    voter.clean()
+
+
+def _unsettled(voter, rating: int):
+    """Qué falta para que el voto esté guardado una vez y confirmado, o None."""
+    saved, state = voter.saved(), votes.queue()
+    if saved == [rating] and votes.is_drained():
+        return None
+    return f"votos guardados {saved}, cola {state}"
+
+
+def _restarts() -> int:
+    return compose.inspect()["ingest-consumer"]["RestartCount"]
+
+
+def test_un_voto_espera_a_que_vuelva_mongo(voter):
+    """Mongo caído no es culpa del mensaje: espera sin ir a errores y sin reiniciar el consumer."""
+    before, errors = _restarts(), _messages_in(SENTINEL_QUEUE)
+    _ok("stop", "mongodb")
+    try:
+        voter.publish(rating=3)
+        # Más que el plazo de 3 s con que pymongo busca al servidor: hubo intentos fallidos.
+        time.sleep(15)
+        assert votes.queue()["messages_unacknowledged"] == 1, "el consumer no tiene el mensaje esperando"
+    finally:
+        _ok("start", "mongodb")
+        _wait_until(_not_ready, RECOVER_TIMEOUT, "que todo vuelva a healthy")
+    _wait_until(lambda: _unsettled(voter, 3), DETECT_TIMEOUT, "que se guarde el voto")
+    assert voter.added_to_count() == 1
+    assert _messages_in(SENTINEL_QUEUE) == errors, "el voto terminó en la cola de errores"
+    assert _restarts() == before
+
+
+# El consumer real, con una sola diferencia: muere al ir a confirmar, con el voto ya guardado.
+_DIES_BEFORE_ACK = """
+import os, sys
+sys.path.insert(0, "/app")
+from pika.adapters.blocking_connection import BlockingChannel
+BlockingChannel.basic_ack = lambda self, tag: os._exit(137)
+from dcicflix_common.sync import worker
+import main
+worker.main("test", main.setup)
+"""
+
+
+def test_morir_entre_guardar_y_confirmar_no_duplica_el_voto(voter):
+    _ok("stop", "ingest-consumer")
+    try:
+        voter.publish(rating=5)
+        dying = compose.run(
+            "run", "--rm", "--no-deps", "-T", "ingest-consumer", "python", "-c", _DIES_BEFORE_ACK, check=False
+        )
+        assert dying.returncode == 137, dying.stderr
+        # Si no, el test no probaría nada: guardado, y el mensaje todavía en la cola.
+        assert voter.saved() == [5]
+        assert votes.queue()["messages_ready"] == 1
+    finally:
+        _ok("start", "ingest-consumer")
+    _wait_until(lambda: _unsettled(voter, 5), DETECT_TIMEOUT, "que se procese la reentrega")
+    assert voter.added_to_count() == 1
+    _wait_until(_not_ready, RECOVER_TIMEOUT, "que todo vuelva a healthy")
