@@ -41,7 +41,7 @@ python -m venv .venv                        # Python 3.12
 pip install -r tests/requirements.txt
 pytest -m static                            # no necesita nada levantado
 docker compose up -d --wait && pytest       # todo menos slow, con el sistema levantado
-pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~4 min)
+pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~5 min)
 pytest services/recommender                 # tests unitarios del recommender, aparte (ver abajo)
 ```
 
