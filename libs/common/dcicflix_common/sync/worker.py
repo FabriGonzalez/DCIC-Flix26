@@ -1,4 +1,4 @@
-"""Bucle común de los workers sincrónicos: el stub "conectado" (D1).
+"""Bucle común de los workers sincrónicos. Sin `setup`, es el stub "conectado" (D1).
 
 Se conecta a Mongo y a Rabbit, verifica la topología en forma pasiva (D10), escribe el
 latido (D13) y aplica la política ante fallas (D14):
