@@ -257,7 +257,8 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 | `deleted` | `bool` | `true` si la reseña se descartó. |
 | `deletedReason` | `string` o `null` | `"anonymous"` (B4), `"orphan"` (B11), `"duplicateVote"` (B13) o `"noContent"` (B12); `null` si está activa. Un solo motivo: el de la primera regla que la descarta. |
 | `commentHidden` | `bool` | `true` si el comentario es basura o sin contenido (B7, B8). Distinto del soft delete: el voto sigue contando y el texto queda en la base, pero no se muestra. |
-| unicidad | — | Como máximo un voto visible por usuario y película. |
+| `user_name`, `user_email` | `string` o ausente | Están en las reseñas del dataset. Las que crea el `ingest-consumer` no los tienen: se resuelven por `user_id` en `users` (README, "Pendiente"). |
+| unicidad | — | Como máximo un voto visible por usuario y película. El `ingest-consumer` la garantiza con un índice único parcial (`one_active_vote`). |
 
 ### Aclaraciones acordadas (2026-11-19)
 

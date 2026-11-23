@@ -208,6 +208,11 @@ Decisiones abiertas:
 - **Lectura de datos sucios:** cómo tolera el `backend` los formatos corruptos mientras dura la limpieza.
 - **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
 
+Para el `backend`:
+
+- **Colección `users`** (acordada el 2026-11-23, sin implementar): un documento por usuario con su `user_id`, nombre y email. Los mensajes de `interactions` llevan solo `user_id`, así que **las reseñas nuevas no tienen `user_name` ni `user_email`**: el `backend` los resuelve por `user_id` al leer. Tiene que incluir los 2.000 usuarios del dataset, cuyos datos hoy están solo en `reviews`, y los usuarios nuevos precargados, que no tienen ninguna reseña. Falta definir quién la carga y cuándo.
+- **Publicar los votos** con `Interaction` y `encode` de [interactions.py](libs/common/dcicflix_common/interactions.py), que define y valida el formato. Un `InvalidInteraction` al construirlo corresponde a una petición inválida. `votedAt` es la hora del `backend`, no la del navegador.
+
 Secciones a completar con la implementación:
 
 - Estrategia de limpieza y uso del LLM en `cleaning-agent`.
