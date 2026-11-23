@@ -191,7 +191,7 @@ services:
     depends_on: *data-depends-on
     healthcheck: *http-healthcheck
 
-  # Stub conectado (D1): Mongo, Rabbit, topología verificada y latido.
+  # Consume la cola interactions y guarda los votos en Mongo.
   ingest-consumer:
     build:
       context: .

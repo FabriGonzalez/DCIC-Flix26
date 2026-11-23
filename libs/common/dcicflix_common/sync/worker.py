@@ -7,6 +7,7 @@ latido (D13) y aplica la política ante fallas (D14):
     Rabbit se corta                → el latido dice "error"; este bucle reconecta
     credenciales rechazadas        → el proceso termina con código 1
     topología faltante             → el proceso termina con código 1
+    suscripción perdida            → el proceso termina con código 1
     (restart: unless-stopped lo vuelve a levantar)
 
 El hilo principal es el único que toca la conexión de pika (no es thread-safe) y la
@@ -14,6 +15,9 @@ atiende con process_data_events, que además mantiene el heartbeat AMQP. Con má
 sin atenderla, el broker la corta. Por eso un servicio con trabajo largo lo hace en otro
 hilo y engancha un `setup` (ver `run`): el hilo principal sigue atendiendo la conexión
 y, en cada vuelta, llama al `tick` del servicio, que es quien usa la conexión.
+
+Un servicio que consume una cola se suscribe en `on_connect`, que se llama en cada
+conexión: la suscripción muere con ella, y al reconectar hay que hacerla de nuevo.
 """
 
 import logging
@@ -21,6 +25,7 @@ import signal
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import pika
 from pika.exceptions import AMQPError, AMQPConnectionError
@@ -29,7 +34,7 @@ from pymongo.errors import PyMongoError
 
 from dcicflix_common import health
 from dcicflix_common.config import ConfigError, MongoSettings, RabbitSettings
-from dcicflix_common.errors import BackgroundTaskError
+from dcicflix_common.errors import BackgroundTaskError, SubscriptionLostError
 from dcicflix_common.sync import mongo, rabbit
 from dcicflix_common.sync.heartbeat import INTERVAL, Heartbeat, HealthState
 
@@ -39,10 +44,21 @@ log = logging.getLogger(__name__)
 _REPORTED = ("rabbitmq", "topology")
 _TOPOLOGY_CHECK_INTERVAL = INTERVAL
 
-# Se llama en el hilo principal en cada vuelta (~1 s), con la conexión abierta.
-Tick = Callable[[pika.BlockingConnection], None]
-# Se llama una vez, con Mongo listo; arranca el trabajo del servicio y devuelve su tick.
-Setup = Callable[[MongoClient], Tick]
+OnConnection = Callable[[pika.BlockingConnection], None]
+
+
+@dataclass(frozen=True)
+class Hooks:
+    """Lo que el servicio hace con la conexión, siempre en el hilo principal."""
+
+    # En cada vuelta: al llegar algo por la conexión, o cada ~1 s si no llega nada.
+    tick: OnConnection | None = None
+    # En cada conexión, la primera y las siguientes, con la topología ya verificada.
+    on_connect: OnConnection | None = None
+
+
+# Se llama una vez, con Mongo listo; arranca el trabajo del servicio.
+Setup = Callable[[MongoClient], Hooks]
 
 
 def run(service: str, setup: Setup | None = None) -> None:
@@ -61,12 +77,12 @@ def run(service: str, setup: Setup | None = None) -> None:
     # Esperar a Mongo al arrancar sirve para detectar credenciales rechazadas, que son
     # irrecuperables. Después, una caída de Mongo solo la informa el latido.
     mongo.wait_until_ready(mongo_client)
-    tick = setup(mongo_client) if setup else None
+    hooks = setup(mongo_client) if setup else Hooks()
 
     while True:
         connection = rabbit.connect(rabbit_settings, name=service)
         try:
-            _serve(connection, state, tick)
+            _serve(connection, state, hooks)
         except AMQPConnectionError as exc:
             # Se cortó la conexión (broker detenido, red, heartbeat AMQP vencido): recuperable.
             log.warning("se perdió la conexión con RabbitMQ (%s: %s); reconectando", type(exc).__name__, exc)
@@ -76,20 +92,24 @@ def run(service: str, setup: Setup | None = None) -> None:
             _close_quietly(connection)
 
 
-def _serve(connection: pika.BlockingConnection, state: HealthState, tick: Tick | None = None) -> None:
+def _serve(connection: pika.BlockingConnection, state: HealthState, hooks: Hooks) -> None:
     """Atiende la conexión y verifica la topología cada 10 s, hasta que se corte."""
     next_topology_check = 0.0
+    connected = False
     while True:
         if time.monotonic() >= next_topology_check:
             rabbit.verify_topology(connection)  # TopologyError: irrecuperable, se propaga
             state.report("topology", health.OK)
             next_topology_check = time.monotonic() + _TOPOLOGY_CHECK_INTERVAL
+        if not connected and hooks.on_connect:
+            hooks.on_connect(connection)
+        connected = True
         state.report("rabbitmq", health.OK)
-        # Atiende el socket hasta 1 s: heartbeat AMQP, y en el futuro, los mensajes.
+        # Atiende el socket hasta 1 s: heartbeat AMQP y mensajes; vuelve antes si llega uno.
         # Si la conexión se cortó, lanza AMQPConnectionError.
         connection.process_data_events(time_limit=1)
-        if tick:
-            tick(connection)
+        if hooks.tick:
+            hooks.tick(connection)
 
 
 def _close_quietly(connection: pika.BlockingConnection) -> None:
@@ -111,6 +131,14 @@ def main(service: str, setup: Setup | None = None) -> None:
     signal.signal(signal.SIGTERM, _exit_on_sigterm)
     try:
         run(service, setup)
-    except (ConfigError, AMQPError, PyMongoError, rabbit.TopologyError, BackgroundTaskError, OSError) as exc:
+    except (
+        ConfigError,
+        AMQPError,
+        PyMongoError,
+        rabbit.TopologyError,
+        SubscriptionLostError,
+        BackgroundTaskError,
+        OSError,
+    ) as exc:
         logging.getLogger(service).error("error irrecuperable, termino: %s: %s", type(exc).__name__, exc)
         sys.exit(1)
