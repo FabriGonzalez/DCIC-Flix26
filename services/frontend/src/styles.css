@@ -46,6 +46,25 @@ h1 {
   color: var(--muted);
 }
 
+.banner {
+  margin: 1rem 0 1.5rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--down);
+  border-left-width: 0.3rem;
+  background: var(--card);
+}
+
+.banner.error {
+  border-color: var(--error);
+}
+
+.banner p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);

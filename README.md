@@ -14,7 +14,7 @@ docker compose up --build
 
 No requiere pasos manuales: la carga del dataset, la declaración de colas, la limpieza y el entrenamiento inicial se coordinan entre los contenedores.
 
-La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el estado del sistema, que consulta a `/api/health` cada 5 s.
+La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra un aviso mientras se limpian los datos o se preparan las recomendaciones (`/api/status`) y, debajo, la salud de los servicios (`/api/health`, cada 5 s).
 
 - **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
 - **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
@@ -43,6 +43,7 @@ pytest -m static                            # no necesita nada levantado
 docker compose up -d --wait && pytest       # todo menos slow, con el sistema levantado
 pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~2,5 min)
 pytest services/recommender                 # tests unitarios del recommender, aparte (ver abajo)
+pytest services/backend                     # tests unitarios del backend, aparte
 ```
 
 Los tests del `recommender` corren en una invocación aparte, con su propio `pytest.ini`: él y el `cleaning-agent` tienen un paquete `app`, y en un mismo proceso de pytest solo se puede importar uno.
@@ -150,6 +151,15 @@ El `backend` las combina en `GET /status`:
 Los eventos disparan trabajo entre servicios; `GET /status` responde siempre a partir del estado real. Por eso un reinicio del `backend` o del `recommender` no deja el sistema en un estado inconsistente.
 
 El `frontend` consulta `GET /status` cada pocos segundos mientras el estado no sea `ready`, y luego deja de consultar.
+
+Respuesta de `GET /status` (en el `frontend`, `/api/status`):
+
+- `200 {"state": "cleaning" | "indexing" | "ready"}`.
+- `503 {"detail": "..."}` si no puede leer la marca (Mongo no responde). No responde `cleaning`: sería informar un estado que no conoce.
+
+Que el recomendador esté listo sale del campo `ready` de su `/health`, no del código HTTP: mientras embebe o indexa responde 200 (está sano, pero no listo). El `backend` lo anota en el chequeo que ya hace cada 10 s para su propio `/health`, así el costo de `/status` no depende de cuántos navegadores consulten. El paso a `ready` puede verse hasta 10 s tarde.
+
+Si el `recommender` se cae después de `ready`, el estado vuelve a `indexing`, pero el `frontend` ya no consulta. El `backend` igual rechaza votos y recomendaciones; cuando una de esas acciones falla por el estado, el `frontend` vuelve a consultar `/status` hasta recuperar `ready` (se implementa con esas funciones).
 
 ## Flujos
 
