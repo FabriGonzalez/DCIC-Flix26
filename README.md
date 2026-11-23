@@ -202,6 +202,17 @@ Ninguna petición reentrena el modelo ni calcula similitudes contra todo el cat�
 
 El `recommender` expone `GET /users/{user_id}/recommendations`, `GET /movies/{movie_id}/similar`, `GET /rankings` y `GET /genres`, todos solo en `internal-net`. Mientras no termina de indexar responden 503. El detalle está en [docs/recomendador.md](docs/recomendador.md), sección 9.4.
 
+## Limpieza de datos
+
+El `cleaning-agent` limpia el dataset una sola vez, en el primer arranque. El detalle de cada anomalía, sus números y el contrato del esquema limpio están en [analysis/ANOMALIAS.md](analysis/ANOMALIAS.md).
+
+- **Criterio:** se corrige solo lo que se recupera sin adivinar, con código determinista antes que con un LLM. Lo que no se puede recuperar queda en `null` ("no se sabe").
+- **Cómo:** copia `movies` y `reviews` a `moviesRaw` y `reviewsRaw`, lee de esa copia y limpia en memoria con funciones puras de Python. Primero aplica las reglas de campo y después las que cruzan documentos: fusión de películas duplicadas, reasignación de reseñas, votos duplicados y contadores. Después reemplaza cada documento por `_id`. Contra Mongo tarda ≈12 s desde cero.
+- **Nada se borra:** los descartes son soft delete (`deleted: true` y `deletedReason`). Todo servicio que lee filtra `{ deleted: false }`.
+- **Auditoría:** un registro por documento en `audit`, con campo, regla, valor original y valor nuevo de cada cambio. Es lo que muestra `/audit`.
+- **Caídas:** si se cae a mitad, repite todo desde el crudo, porque correr la limpieza dos veces da lo mismo que una. `data.cleaned` sale al menos una vez.
+- **Sin LLM:** las reseñas cuyo rating no se recupera del texto quedan con `rating: null` (1.884). El contrato lo admite mientras el LLM esté en pausa.
+
 ## Pendiente
 
 Decisiones abiertas:
@@ -217,7 +228,7 @@ Para el `backend`:
 
 Secciones a completar con la implementación:
 
-- Estrategia de limpieza y uso del LLM en `cleaning-agent`.
+- Uso del LLM en `cleaning-agent` (en pausa hasta definir el proveedor).
 - Ruta `/audit`: métricas macro y detalle de registros.
 - Estrategia del motor de recomendaciones y justificación del modelo: está completa en [docs/recomendador.md](docs/recomendador.md), con la implementación en la sección 9.6. Falta resumirla acá.
 - Integraciones con LLM en la interfaz (traducción, chat).

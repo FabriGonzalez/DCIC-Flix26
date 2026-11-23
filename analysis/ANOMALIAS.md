@@ -251,7 +251,7 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 
 | Campo | Tipo | Garantía |
 | :-- | :-- | :-- |
-| `rating` | `int` 1–5 | Puede venir del texto (regex o LLM); el origen queda en la auditoría. |
+| `rating` | `int` 1–5, o `null` sin LLM | Puede venir del texto (regex o LLM); el origen queda en la auditoría. `null` solo en reseñas activas cuyo rating no se pudo recuperar con la regex mientras el LLM no esté habilitado (1.884). |
 | `date` | `Date` o `null` | `null` si la fecha original era imposible o desconocida. |
 | `datePrecision` | `"day"`, `"year"` o `null` | `"year"` para las `circa`: el frontend muestra solo el año. `null` si y solo si `date` es `null`. |
 | `deleted` | `bool` | `true` si la reseña se descartó. |
@@ -265,7 +265,7 @@ Lo que cualquier servicio puede asumir sobre la base después de la limpieza.
 Confirmadas por el grupo al revisar el contrato desde el recomendador ([docs/recomendador.md](../docs/recomendador.md)):
 
 - **`deleted` siempre presente:** todo documento activo tiene `deleted: false`, y los descartados, `deleted: true`. El campo nunca falta.
-- **LLM obligatorio:** hay API key, así que toda reseña activa tiene `rating` entero de 1 a 5, incluidas las ≈1.900 que se infieren del comentario (B5, B6). La marca `done` y `data.cleaned` se emiten con la inferencia terminada.
+- ~~**LLM obligatorio:** hay API key, así que toda reseña activa tiene `rating` entero de 1 a 5, incluidas las ≈1.900 que se infieren del comentario (B5, B6). La marca `done` y `data.cleaned` se emiten con la inferencia terminada.~~ Reemplazada el 2026-11-23: ver "Sin LLM, `rating` admite `null`" más abajo.
 - **Integridad referencial:** toda reseña activa apunta a una película activa (resultado de G2 y B11).
 - **Listas de personas:** `directors`, `cast` y `writers` pueden faltar, igual que `genres`. En el crudo faltan en 238, 204 y 995 películas.
 - **`plot` no se modifica:** ninguna regla lo cambia. La única excepción es la fusión de duplicados (A5), que puede quedarse con el plot de otra copia (2 de los 651 grupos). El recomendador embebe los plots mientras corre la limpieza, así que si una regla futura modifica `plot`, hay que avisarle.
@@ -298,6 +298,13 @@ Decisiones que el análisis no definía y aparecieron al escribir el código. La
 
 - **`data.cleaned` sale al menos una vez, no exactamente una.** La marca anota si el evento salió (`eventPublished`). Si el agente se cae entre guardar `done` y publicar, al arrancar ve `done` sin publicar y publica. Si la limpieza se repite tras una caída, también vuelve a publicar. **El `recommender` tiene que tolerar un evento repetido**: hoy lo cumple, porque cada `data.cleaned` recalcula todo desde la base. El mensaje es JSON con la hora de fin: `{"finishedAt": "2026-11-20T20:23:33.962000"}`.
 - **Si la limpieza falla** (por ejemplo, se cae Mongo mientras escribe), el proceso termina con código 1, Docker lo reinicia y la limpieza se repite desde el crudo. Comprobado deteniendo Mongo en plena limpieza.
+
+### Sin LLM, `rating` admite `null` (2026-11-23)
+
+- **Decisión:** el LLM queda en pausa hasta definir el proveedor y la key. Sin `LLM_API_KEY`, las 1.884 reseñas activas cuyo rating no recupera la regex (B6) quedan con `rating: null`, y la marca `done` y `data.cleaned` se emiten igual. Reemplaza la aclaración "LLM obligatorio" del 2026-11-19.
+- **Por qué:** la app tiene que funcionar sin API key (README, D15), así que el contrato no puede prometer algo que depende de ella. `null` ya significa "no se sabe" en todo el contrato.
+- **Qué hacen los que leen:** no cuentan esas reseñas como votos. Cómo se muestran (por ejemplo, el comentario sin estrellas) lo define el `frontend`. El `recommender` ya las descarta (recomendador, pendiente 10).
+- **Cuando se habilite el LLM:** vuelve a valer "toda reseña activa tiene `rating` de 1 a 5".
 
 ## 8. Pendientes
 

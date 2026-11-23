@@ -729,7 +729,7 @@ El código está en [services/recommender/app](../services/recommender/app/):
 - `Q₅ = 0,53·Q − 0,17`;
 - `WR` con media 3,41 y desvío 0,37.
 
-El único valor fuera de contrato que queda son **1.884 reseñas activas con `rating: null`**: sin `LLM_API_KEY`, el `cleaning-agent` no infiere las estrellas del comentario (pendiente 10). El `recommender` las descarta como votos y las cuenta en el log.
+Quedan **1.884 reseñas activas con `rating: null`**: sin `LLM_API_KEY`, el `cleaning-agent` no infiere las estrellas del comentario. El contrato lo admite (pendiente 10). El `recommender` las descarta como votos y las cuenta en el log.
 
 **Fallas probadas:**
 
@@ -756,4 +756,4 @@ El único valor fuera de contrato que queda son **1.884 reseñas activas con `ra
 7. Recalcular sobre la base limpia los números de la sección 2, `m` y `M` (3.4) y la prueba de conjuntos escondidos (6.3). No deberían moverse mucho; si se mueven, se revisan los valores. **Avance:** lo que calcula el servicio al indexar ya está medido sobre la base limpia, y coincide con el crudo (9.6): `C`, `Q₅` y la media y el desvío del `WR`. Faltan los scripts, que siguen leyendo los `.json.gz`.
 8. ~~Guardar los vectores en un volumen~~: decidido en 4.4, solo los embeddings.
 9. Acordar con el grupo la API de 9.4 (`backend`) y las pantallas del onboarding (`frontend`). La API ya está implementada como la describe 9.4.
-10. **`rating: null` sin LLM:** el contrato de ANOMALIAS dice que `reviews.rating` es un `int` de 1 a 5, pero sin `LLM_API_KEY` quedan 1.884 reseñas activas con `null`. Hay que acordar con el `cleaning-agent` si el contrato admite `null` en ese caso. El `recommender` ya las descarta, así que no necesita cambios.
+10. ~~**`rating: null` sin LLM**~~: resuelto (2026-11-23). El contrato de ANOMALIAS admite `null` mientras el LLM no esté habilitado (sección 7, "Sin LLM, `rating` admite `null`"). El `recommender` ya las descarta, así que no necesita cambios.
