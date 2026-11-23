@@ -1,4 +1,4 @@
-"""backend: /health (D12) y /status (status.py).
+"""backend: /health (D12), /status (status.py) y /movies (catalog.py).
 
 Críticas: Mongo, Rabbit y la topología. Informativa: el recommender. Si no está
 listo, el backend sigue sano y el catálogo, navegable.
@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Query, Response
 from pymongo.errors import PyMongoError
 
 from dcicflix_common import config
@@ -21,7 +21,7 @@ from dcicflix_common import logging as logs
 from dcicflix_common.aio.service import DataService
 from dcicflix_common.config import ConfigError
 
-from app import status
+from app import catalog, status
 
 SERVICE = "backend"
 PORT = 8000
@@ -57,6 +57,18 @@ def create_app(on_fatal) -> FastAPI:
             response.status_code = 503
             return {"detail": "no se pudo leer la marca de limpieza"}
         return {"state": status.combine(mark, recommender.ready)}
+
+    @app.get("/movies")
+    async def list_movies(
+        response: Response,
+        q: str = Query("", max_length=100),
+        page: int = Query(1, ge=1, le=10_000),
+    ) -> dict:
+        try:
+            return await catalog.list_movies(data.mongo, q, page)
+        except PyMongoError:
+            response.status_code = 503
+            return {"detail": "no se pudo leer el catálogo"}
 
     return app
 
