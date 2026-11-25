@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router";
 
 import { fetchMovies, type CatalogResult, type MovieCard } from "./movies";
+import { Poster } from "./Poster";
 
 // Espera desde la última tecla antes de buscar: así no sale un pedido por cada letra.
 const SEARCH_DELAY_MS = 300;
@@ -8,20 +10,33 @@ const SEARCH_DELAY_MS = 300;
 const ratingFormat = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const countFormat = new Intl.NumberFormat("es-AR");
 
+function parsePage(value: string | null): number {
+  const page = Number(value);
+  return Number.isInteger(page) && page >= 1 ? page : 1;
+}
+
 export function Catalog() {
-  const [text, setText] = useState("");
-  const [query, setQuery] = useState("");
-  const [page, setPage] = useState(1);
+  // La búsqueda y la página viven en la URL (/?q=…&page=3): al volver de una ficha con
+  // "atrás", el catálogo queda donde estaba, y el link se puede compartir.
+  const [params, setParams] = useSearchParams();
+  const query = params.get("q") ?? "";
+  const page = parsePage(params.get("page"));
+
+  const [text, setText] = useState(query);
   const [attempt, setAttempt] = useState(0); // "Reintentar" lo incrementa para repetir el pedido
   const [result, setResult] = useState<CatalogResult>({ kind: "loading" });
 
+  // Si la URL cambia desde afuera (atrás/adelante), el cuadro de búsqueda la acompaña.
+  useEffect(() => setText(query), [query]);
+
   useEffect(() => {
+    if (text === query) return; // sin esto, al entrar con ?page=3 se volvería a la página 1
     const timer = setTimeout(() => {
-      setQuery(text);
-      setPage(1);
+      // replace: cada búsqueda no deja una entrada en el historial; las páginas sí.
+      setParams(text ? { q: text } : {}, { replace: true });
     }, SEARCH_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [text]);
+  }, [text, query, setParams]);
 
   useEffect(() => {
     // Si cambian la búsqueda o la página antes de que vuelva el pedido, se cancela: si no,
@@ -34,6 +49,8 @@ export function Catalog() {
     return () => controller.abort();
   }, [query, page, attempt]);
 
+  const goToPage = (next: number) => setParams(query ? { q: query, page: String(next) } : { page: String(next) });
+
   return (
     <section className="catalog">
       <input
@@ -44,7 +61,7 @@ export function Catalog() {
         value={text}
         onChange={(event) => setText(event.target.value)}
       />
-      <Results result={result} query={query} onRetry={() => setAttempt((n) => n + 1)} onPage={setPage} />
+      <Results result={result} query={query} onRetry={() => setAttempt((n) => n + 1)} onPage={goToPage} />
     </section>
   );
 }
@@ -110,24 +127,10 @@ function Card({ movie }: { movie: MovieCard }) {
     .filter(Boolean)
     .join(" · ");
   return (
-    <article className="movie">
+    <Link className="movie" to={`/movies/${movie.id}`}>
       <Poster url={movie.poster} title={title} />
       <h2>{title}</h2>
       {details && <p className="muted">{details}</p>}
-    </article>
+    </Link>
   );
-}
-
-/** Carátula, o una genérica si no hay URL o la imagen no carga (≈12 % del dataset, A24). */
-function Poster({ url, title }: { url: string | null; title: string }) {
-  const [broken, setBroken] = useState(false);
-  if (!url || broken) {
-    return (
-      <div className="poster placeholder" aria-hidden="true">
-        <span>{title}</span>
-      </div>
-    );
-  }
-  // alt vacío: el título ya está escrito debajo; repetirlo sería ruido para un lector de pantalla.
-  return <img className="poster" src={url} alt="" loading="lazy" onError={() => setBroken(true)} />;
 }

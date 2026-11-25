@@ -1,14 +1,27 @@
+import { Link, Route, Routes } from "react-router";
+
 import { Catalog } from "./Catalog";
+import { MovieDetailPage } from "./MovieDetail";
+import { NotFound } from "./NotFound";
 import { useSystemStatus, type SystemState } from "./status";
 
 export function App() {
   return (
     <main className="page">
       <header>
-        <h1>DCIC-Flix</h1>
+        <h1>
+          <Link className="home" to="/">
+            DCIC-Flix
+          </Link>
+        </h1>
       </header>
+      {/* Fuera de Routes: el aviso se ve en todas las pantallas y no se reinicia al navegar. */}
       <StatusBanner />
-      <Catalog />
+      <Routes>
+        <Route path="/" element={<Catalog />} />
+        <Route path="/movies/:id" element={<MovieDetailPage />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
     </main>
   );
 }

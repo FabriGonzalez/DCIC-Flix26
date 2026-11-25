@@ -178,6 +178,30 @@ La consigna pide que el catálogo se pueda recorrer en todo momento, también mi
 - `200 {"items": [{"id", "title", "year", "poster", "genres", "imdbRating"}], "page", "pageSize": 24, "total"}`. Una página más allá del final trae `items` vacío.
 - `503 {"detail": "..."}` si Mongo no responde.
 
+La búsqueda y la página viven en la URL del `frontend` (`/?q=…&page=3`): al volver de una ficha, el catálogo queda donde estaba.
+
+### Ficha
+
+Cada película tiene su página en `/movies/{id}`, con sus datos, la sinopsis y las reseñas. Como el catálogo, se puede ver en todo momento y sigue el mismo criterio: **el `backend` valida, no corrige**.
+
+- **Copias duplicadas:** si el id es de una copia descartada en la fusión (A5), el `backend` devuelve la película ganadora (`mergedInto`), con su id, y el `frontend` corrige la URL. Así, un link guardado antes de la limpieza sigue funcionando. El contrato garantiza que `mergedInto` apunta a una película activa: se sigue un solo salto.
+- **Reseñas durante la limpieza:** se muestran las crudas, validadas. Pueden verse comentarios basura, anónimas o votos repetidos hasta que termine; el aviso de estado lo explica.
+- **Reseñas incompletas:** el soft delete es lo único que saca una reseña. `commentHidden` oculta solo el texto (quedan nombre, estrellas y fecha), y `rating: null` (sin LLM) solo las estrellas ("Sin puntaje").
+- **Total:** sale del conteo de reseñas activas, no de `num_mflix_comments`, que no cuenta las de comentario oculto.
+- **Privacidad:** la API no devuelve `user_email`.
+
+`GET /movies/{id}` (en el `frontend`, `/api/movies/{id}`):
+
+- `200` con los campos del catálogo más `plot` (`fullplot` si existe, si no `plot`), `runtime` (minutos), `rated`, `directors`, `cast`, `countries`, `languages`, `imdbVotes` y `awards` (texto). Lo que no cumple el contrato sale `null` o lista vacía. El `id` puede no ser el pedido (copia fusionada).
+- `404 {"detail": "..."}` si el id no es válido o no existe.
+- `503 {"detail": "..."}` si Mongo no responde.
+
+`GET /movies/{id}/reviews` (en el `frontend`, `/api/movies/{id}/reviews`):
+
+- `200 {"items": [{"id", "userName", "rating", "comment", "date", "datePrecision"}], "total"}`. Las activas, de la más reciente a la más vieja; sin fecha válida, al final. Hasta 100 (hoy el máximo es 42 por película); `total` cuenta todas. `date` es ISO en UTC; con `datePrecision: "year"` (las `circa`) se muestra solo el año.
+- No comprueba que la película exista: un id que no es de ninguna da `items` vacío.
+- `404` si el id no es válido; `503` si Mongo no responde.
+
 ## Flujos
 
 ### Arranque en frío

@@ -1,4 +1,4 @@
-"""backend: /health (D12), /status (status.py) y /movies (catalog.py).
+"""backend: /health (D12), /status (status.py), /movies (catalog.py) y la ficha (movie.py, reviews.py).
 
 Críticas: Mongo, Rabbit y la topología. Informativa: el recommender. Si no está
 listo, el backend sigue sano y el catálogo, navegable.
@@ -21,7 +21,7 @@ from dcicflix_common import logging as logs
 from dcicflix_common.aio.service import DataService
 from dcicflix_common.config import ConfigError
 
-from app import catalog, status
+from app import catalog, movie, reviews, status
 
 SERVICE = "backend"
 PORT = 8000
@@ -69,6 +69,30 @@ def create_app(on_fatal) -> FastAPI:
         except PyMongoError:
             response.status_code = 503
             return {"detail": "no se pudo leer el catálogo"}
+
+    @app.get("/movies/{movie_id}")
+    async def movie_detail(movie_id: str, response: Response) -> dict:
+        try:
+            found = await movie.get_movie(data.mongo, movie_id)
+        except PyMongoError:
+            response.status_code = 503
+            return {"detail": "no se pudo leer la película"}
+        if found is None:
+            response.status_code = 404
+            return {"detail": "no existe la película"}
+        return found
+
+    @app.get("/movies/{movie_id}/reviews")
+    async def movie_reviews(movie_id: str, response: Response) -> dict:
+        try:
+            found = await reviews.list_reviews(data.mongo, movie_id)
+        except PyMongoError:
+            response.status_code = 503
+            return {"detail": "no se pudieron leer las reseñas"}
+        if found is None:
+            response.status_code = 404
+            return {"detail": "no existe la película"}
+        return found
 
     return app
 

@@ -152,3 +152,128 @@ button.link {
   gap: 1rem;
   margin-top: 2rem;
 }
+
+a {
+  color: var(--accent);
+}
+
+a.home {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* La tarjeta entera es un link: sin el subrayado ni el color de un link de texto. */
+a.movie {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.movie:hover h2,
+a.movie:focus-visible h2 {
+  text-decoration: underline;
+}
+
+.empty {
+  margin-top: 2rem;
+}
+
+.detail {
+  margin-top: 1.5rem;
+}
+
+.back {
+  display: inline-block;
+  margin-bottom: 1.25rem;
+}
+
+.detail-main {
+  display: grid;
+  grid-template-columns: minmax(10rem, 16rem) 1fr;
+  gap: 1.75rem;
+  align-items: start;
+}
+
+@media (max-width: 40rem) {
+  .detail-main {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-poster {
+    max-width: 14rem;
+  }
+}
+
+.detail h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.6rem;
+}
+
+.detail p {
+  margin: 0.3rem 0;
+}
+
+.plot {
+  margin-top: 1rem !important;
+  line-height: 1.55;
+}
+
+.facts {
+  margin: 1.25rem 0 0;
+}
+
+.facts div {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.reviews-section {
+  margin-top: 2.5rem;
+}
+
+.reviews-section h3 {
+  margin: 0 0 0.25rem;
+}
+
+.reviews {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.review {
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+}
+
+.review header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.9rem;
+}
+
+.review p {
+  margin: 0.45rem 0 0;
+  line-height: 1.5;
+}
+
+.stars {
+  color: var(--down);
+  letter-spacing: 0.05em;
+}
