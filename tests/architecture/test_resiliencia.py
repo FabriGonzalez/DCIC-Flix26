@@ -99,8 +99,9 @@ def _wait_until(pending, timeout: float, goal: str) -> float:
 def sistema_sano():
     if not compose.containers():
         pytest.skip("no hay nada levantado: correr `docker compose up -d --wait`")
-    if (pending := _not_ready()) is not None:
-        pytest.fail(f"el sistema no está sano antes de empezar: {pending}")
+    # Espera en vez de fallar: Docker marca unhealthy al tercer healthcheck, y con una caída
+    # corta eso puede llegar cuando el servicio ya se recuperó y el test anterior terminó.
+    _wait_until(_not_ready, RECOVER_TIMEOUT, "que el sistema esté sano antes de empezar")
 
 
 def _ok(*args: str) -> None:
@@ -213,6 +214,8 @@ def test_los_servicios_se_reconectan_solos(sistema_sano):
 
 
 # --- Votos (docs/ingest-consumer.md): ninguno se pierde ni se guarda dos veces
+#
+# Los que usan `voter` publican en la cola; los de `api_voter`, votan por la API.
 
 
 @pytest.fixture
@@ -280,3 +283,70 @@ def test_morir_entre_guardar_y_confirmar_no_duplica_el_voto(voter):
     _wait_until(lambda: _unsettled(voter, 5), DETECT_TIMEOUT, "que se procese la reentrega")
     assert voter.added_to_count() == 1
     _wait_until(_not_ready, RECOVER_TIMEOUT, "que todo vuelva a healthy")
+
+
+@pytest.fixture
+def api_voter(voter):
+    voter.register()
+    return voter
+
+
+def _system_state() -> str | None:
+    code, _content_type, body = compose.get_from_frontend("/api/status")
+    return json.loads(body)["state"] if code == 200 else None
+
+
+def _not_in_state(state: str):
+    return lambda: None if (now := _system_state()) == state else f"el estado es {now}"
+
+
+def _vote_until_accepted(voter, rating: int) -> None:
+    """Tras una caída, el estado puede ir y volver de ready unos segundos: el recommender
+    informa 503 hasta su próximo chequeo, y el backend lo nota en el suyo (10 s cada uno)."""
+
+    def pending():
+        code = voter.post(rating)
+        return None if code == 202 else f"HTTP {code}"
+
+    _wait_until(pending, RECOVER_TIMEOUT, "que se acepte el voto")
+
+
+def test_un_voto_aceptado_espera_al_consumer(api_voter):
+    """Aceptar no depende del consumer: si está detenido, el voto queda en la cola."""
+    _ok("stop", "ingest-consumer")
+    try:
+        _vote_until_accepted(api_voter, 4)
+        assert votes.queue()["messages_ready"] == 1
+        assert api_voter.saved() == []
+    finally:
+        _ok("start", "ingest-consumer")
+    _wait_until(lambda: _unsettled(api_voter, 4), DETECT_TIMEOUT, "que se guarde el voto")
+    _wait_until(_not_ready, RECOVER_TIMEOUT, "que todo vuelva a healthy")
+
+
+# Sin Rabbit, 503 (no se pudo publicar) hasta que el recommender también lo nota: desde
+# ahí el estado es indexing, y 409. Sin Mongo no se puede leer el estado: siempre 503.
+@pytest.mark.parametrize("dependency, rejections", [("mongodb", {503}), ("rabbitmq", {503, 409})])
+def test_sin_mongo_o_sin_rabbit_no_se_acepta_el_voto(api_voter, dependency, rejections):
+    """Responder 202 sería prometer un voto que se puede perder."""
+    _ok("stop", dependency)
+    try:
+        assert api_voter.post(2) in rejections
+    finally:
+        _ok("start", dependency)
+        _wait_until(_not_ready, RECOVER_TIMEOUT, "que todo vuelva a healthy")
+    assert api_voter.saved() == [], "el voto rechazado se guardó"
+    _vote_until_accepted(api_voter, 5)
+    _wait_until(lambda: _unsettled(api_voter, 5), DETECT_TIMEOUT, "que se guarde el voto")
+
+
+def test_sin_recommender_el_sistema_no_esta_listo_para_votar(api_voter):
+    _ok("stop", "recommender")
+    try:
+        _wait_until(_not_in_state("indexing"), DETECT_TIMEOUT, "que el backend note la caída")
+        assert api_voter.post(3) == 409
+    finally:
+        _ok("start", "recommender")
+        _wait_until(_not_ready, RECOVER_TIMEOUT, "que todo vuelva a healthy")
+    _vote_until_accepted(api_voter, 3)
+    _wait_until(lambda: _unsettled(api_voter, 3), DETECT_TIMEOUT, "que se guarde el voto")

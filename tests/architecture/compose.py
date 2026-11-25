@@ -103,9 +103,21 @@ def published_port(service: str, target: int) -> int:
 
 def get_from_frontend(path: str) -> tuple[int, str, str]:
     """GET desde el host al puerto publicado del frontend: (código, content-type, cuerpo)."""
+    return _request(path)
+
+
+def post_to_frontend(path: str, body: object) -> tuple[int, str, str]:
+    """POST con `body` en JSON, como get_from_frontend."""
+    return _request(path, json.dumps(body).encode())
+
+
+def _request(path: str, data: bytes | None = None) -> tuple[int, str, str]:
     port = published_port("frontend", 80)
+    request = urllib.request.Request(
+        f"http://localhost:{port}{path}", data=data, headers={"Content-Type": "application/json"} if data else {}
+    )  # con datos, urllib manda un POST
     try:
-        response = urllib.request.urlopen(f"http://localhost:{port}{path}", timeout=10)
+        response = urllib.request.urlopen(request, timeout=10)
     except urllib.error.HTTPError as error:
         response = error
     return response.status, response.headers.get("content-type", ""), response.read().decode()
