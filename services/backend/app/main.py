@@ -1,4 +1,5 @@
-"""backend: /health (D12), /status (status.py), /movies (catalog.py) y la ficha (movie.py, reviews.py).
+"""backend: /health (D12), /status (status.py), /movies (catalog.py), la ficha (movie.py,
+reviews.py) y /users (users.py).
 
 Críticas: Mongo, Rabbit y la topología. Informativa: el recommender. Si no está
 listo, el backend sigue sano y el catálogo, navegable.
@@ -21,7 +22,7 @@ from dcicflix_common import logging as logs
 from dcicflix_common.aio.service import DataService
 from dcicflix_common.config import ConfigError
 
-from app import catalog, movie, reviews, status
+from app import catalog, movie, reviews, status, users
 
 SERVICE = "backend"
 PORT = 8000
@@ -33,11 +34,14 @@ def create_app(on_fatal) -> FastAPI:
     http = httpx.AsyncClient(timeout=3)
     recommender = status.RecommenderProbe(http, config.recommender_url())
     data = DataService(SERVICE, on_fatal=on_fatal, info={"recommender": recommender.check})
+    user_loader = users.UserLoader(data.mongo, on_fatal=on_fatal)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await data.start()
+        user_loader.start()
         yield
+        await user_loader.stop()
         await data.stop()
         await http.aclose()
 
@@ -93,6 +97,17 @@ def create_app(on_fatal) -> FastAPI:
             response.status_code = 404
             return {"detail": "no existe la película"}
         return found
+
+    @app.get("/users")
+    async def list_users(response: Response, q: str = Query("", max_length=100)) -> dict:
+        if not user_loader.loaded:
+            response.status_code = 503
+            return {"detail": "los usuarios se están cargando"}
+        try:
+            return await users.list_users(data.mongo, q)
+        except PyMongoError:
+            response.status_code = 503
+            return {"detail": "no se pudieron leer los usuarios"}
 
     return app
 

@@ -21,7 +21,7 @@ RATINGS = range(1, 6)
 MAX_COMMENT_LENGTH = 5000
 
 # Identificador de los votos anónimos del dataset (ANOMALIAS, B4).
-_ANONYMOUS_ID = "usr_0000"
+ANONYMOUS_ID = "usr_0000"
 _OBJECT_ID = re.compile(r"[0-9a-f]{24}")
 _FIELDS = ("user_id", "movie_id", "rating", "comment", "votedAt")
 
@@ -40,7 +40,7 @@ class Interaction:
 
     def __post_init__(self) -> None:
         _check_text("user_id", self.user_id)
-        if self.user_id != self.user_id.strip() or self.user_id in ("", _ANONYMOUS_ID):
+        if self.user_id != self.user_id.strip() or self.user_id in ("", ANONYMOUS_ID):
             raise InvalidInteraction("user_id: vacío, anónimo o con espacios alrededor")
 
         _check_text("movie_id", self.movie_id)
