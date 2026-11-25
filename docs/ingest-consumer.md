@@ -1,6 +1,6 @@
 # Ingesta de votos
 
-> **Estado: implementado en [services/ingest-consumer](../services/ingest-consumer/) (2026-11-23).** Falta que el `backend` publique los votos: hasta entonces, se prueba publicando en la cola desde los tests.
+> **Estado: implementado en [services/ingest-consumer](../services/ingest-consumer/) (2026-11-23).** El `backend` publica los votos desde el 2026-11-25 (sección 8).
 
 El `ingest-consumer` toma los votos con reseña que el `backend` deja en la cola `interactions` y los guarda en MongoDB. Su garantía es que **un voto aceptado no se pierde ni se guarda dos veces**.
 
@@ -13,7 +13,7 @@ frontend ──POST voto──▶ backend ──publica──▶ [interactions] 
 
 **Por qué una cola y no escribir directo en Mongo:**
 
-- El usuario no espera a Mongo.
+- El usuario no espera a que Mongo guarde.
 - Con el consumer o Mongo caídos, los votos se acumulan y se procesan al volver.
 - Hay un solo escritor de votos, de a un mensaje por vez: dos votos del mismo usuario no compiten.
 
@@ -125,6 +125,9 @@ Con los contenedores reales. En todas, el voto en curso quedó guardado **una so
 | [test_ingest_store.py](../services/ingest-consumer/tests/test_ingest_store.py) | Guardar, reemplazar, reentregas e índice | Docker (Mongo descartable) |
 | [test_ingest.py](../tests/architecture/test_ingest.py) | De la cola a Mongo | El sistema levantado |
 | [test_resiliencia.py](../tests/architecture/test_resiliencia.py) (`slow`) | Mongo detenido, y morir entre guardar y el `ack` | El sistema levantado |
+| [test_vote_api.py](../tests/architecture/test_vote_api.py) | De la API a la ficha, y los rechazos | El sistema levantado |
+| [test_resiliencia.py](../tests/architecture/test_resiliencia.py) (`slow`) | Votar por la API sin consumer, Mongo, RabbitMQ o `recommender` | El sistema levantado |
+| [test_votes.py](../services/backend/tests/test_votes.py) y [test_publisher.py](../services/backend/tests/test_publisher.py) | El `backend`: comprobaciones y publicación | Docker (Mongo descartable) |
 
 Los votos de prueba usan un usuario nuevo y se borran al terminar. Se comprobó que los tests fallan si el servicio está mal: se introdujeron más de 40 errores en el código y todos se detectaron, salvo uno que solo cambia el texto de un log.
 
@@ -134,3 +137,43 @@ Los votos de prueba usan un usuario nuevo y se borran al terminar. Se comprobó 
 - **`interactions.errors` se revisa a mano:** nada la consume. El motivo de cada mensaje está en el log del consumer.
 - **Un `votedAt` adelantado bloquea los votos siguientes** de ese usuario para esa película, hasta que pase esa hora (I5). Por eso la hora la pone el `backend`.
 - **Sin probar con contenedores:** el error inesperado y que Mongo rechace la operación (solo con tests unitarios), y un corte brusco de Mongo, que es lo que cubre `j: true`.
+
+## 8. Publicar el voto (`backend`)
+
+La API está en el [README](../README.md#voto-con-reseña); el código, en [votes.py](../services/backend/app/votes.py) y [publisher.py](../services/backend/app/publisher.py).
+
+| # | Tema | Decisión | Alternativa descartada |
+| :-- | :-- | :-- | :-- |
+| V1 | Usuario y película inexistentes | Se comprueban antes de publicar | Delegarlo a la cola |
+| V2 | El estado no es `ready` | 409 | 503: no se distinguiría de una caída |
+| V3 | Voto a una copia fusionada | 404, por V1. Solo pasa con una ficha abierta desde antes de la limpieza; al recargar lleva a la ganadora | Pasarlo a la ganadora: código para un caso muy raro |
+| V4 | Cuándo se responde 202 | Con la confirmación de RabbitMQ. Desconectado, error al instante; colgado, a los 2 s | No esperarla: con RabbitMQ caído se aceptaría un voto que se pierde |
+| V5 | Canal | Uno por voto: si se rompe, el siguiente no se entera | Uno compartido: hay que detectar el cierre y reabrirlo |
+
+**Qué se delega y qué no.** Comprobar el usuario y la película son dos lecturas por `_id`, ≈ 1,4 ms cada una. Lo lento es guardar: ≈ 69 ms, porque Mongo escribe en disco (`j: true`) la reseña y el contador. Eso es lo que va a la cola. Delegar también la comprobación no ahorra trabajo, y después del 202 no hay forma de avisarle a quien vota, salvo que pregunte por el resultado: más carga que la que se ahorró.
+
+`interactions.errors` queda para lo que el usuario no puede arreglar, como un error nuestro: el mensaje no se pierde y la cola sigue.
+
+El consumer comprueba la película pero no el usuario: sin V1, un voto de un usuario inexistente se guardaría como una reseña sin nombre.
+
+**Detalles de la publicación:**
+
+- **`on_return_raises`:** sin él, aio-pika da por bueno publicar en una cola que no existe.
+- **Mensaje persistente:** que la cola sea durable no alcanza; sin esto, vuelve vacía de un reinicio.
+- **`asyncio.wait` y no `wait_for`:** con RabbitMQ colgado, cerrar el canal también se cuelga, y `wait_for` esperaría a que termine.
+
+**Fallas probadas (2026-11-25)** con los contenedores reales. Las de RabbitMQ congelado y reiniciado, publicando un voto por segundo en una cola temporal; las de servicios detenidos, votando por la API:
+
+| Caso | Resultado |
+| :-- | :-- |
+| Normal, con confirmación | 7 a 8 ms |
+| 100 votos a la vez | 100 aceptados en 249 ms |
+| Cola inexistente | Error en 7 ms |
+| RabbitMQ congelado 8 s (`docker pause`) | Error a los 2 s. 15 aceptados, 15 en la cola |
+| RabbitMQ reiniciado | Error al instante hasta reconectar (≈ 15 s). 30 aceptados, 30 en la cola |
+| Consumer detenido | Se acepta; el voto se guarda cuando vuelve |
+| Mongo detenido | 503 |
+| RabbitMQ detenido | 503; cuando el `recommender` también lo nota, el estado pasa a `indexing` y da 409 (README, "Estado del sistema") |
+| `recommender` detenido | 409, cuando el `backend` lo nota (hasta 10 s) |
+
+**Límite:** si la respuesta de RabbitMQ no llega a tiempo, el voto pudo haberse publicado y el usuario ve un error. Reintentar es seguro, porque el consumer reemplaza el voto anterior.
