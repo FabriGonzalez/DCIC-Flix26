@@ -23,7 +23,7 @@ El costo es la consistencia eventual: la reseña no aparece al instante en la fi
 
 | # | Tema | Decisión | Alternativa descartada |
 | :-- | :-- | :-- | :-- |
-| I1 | Datos del usuario en el mensaje | Solo `user_id`; el nombre y el email los resuelve el `backend` al leer (colección `users`, [README](../README.md#pendiente)) | Mandarlos en cada mensaje: copias de un dato que no es del voto, y el email circulando por la cola |
+| I1 | Datos del usuario en el mensaje | Solo `user_id`; el nombre y el email los resuelve el `backend` al leer (colección `users`, [README](../README.md#usuarios)) | Mandarlos en cada mensaje: copias de un dato que no es del voto, y el email circulando por la cola |
 | I2 | Volver a votar | Se actualiza el mismo documento. Es una sola escritura, atómica | Crear otro y descartar el viejo: son dos escrituras, y una caída entre ambas deja dos votos activos o ninguno |
 | I3 | `num_mflix_comments` | Se recuenta en cada voto | Sumar 1: una reentrega cuenta doble |
 | I4 | Un solo voto activo por usuario y película | Índice único parcial en Mongo | Confiar en el código |

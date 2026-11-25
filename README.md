@@ -107,7 +107,7 @@ Justificación:
 | Origen | Destino | Mecanismo | Contenido |
 | :--- | :--- | :--- | :--- |
 | `frontend` | `backend` | HTTP | Catálogo, estado, votos, recomendaciones, auditoría |
-| `backend` | `mongodb` | Lectura | Catálogo, reseñas, auditoría, marca de limpieza |
+| `backend` | `mongodb` | Lectura; escribe solo `users` | Catálogo, reseñas, auditoría, marca de limpieza, usuarios |
 | `backend` | `rabbitmq` | Publica | Votos y reseñas |
 | `backend` | `recommender` | HTTP | Recomendaciones y `/health` |
 | `ingest-consumer` | `rabbitmq`, `mongodb` | Consume, escribe | Persistencia de interacciones |
@@ -177,6 +177,24 @@ La consigna pide que el catálogo se pueda recorrer en todo momento, también mi
 - Parámetros: `q` (texto del título, hasta 100 caracteres; opcional) y `page` (desde 1). Fuera de rango: 422.
 - `200 {"items": [{"id", "title", "year", "poster", "genres", "imdbRating"}], "page", "pageSize": 24, "total"}`. Una página más allá del final trae `items` vacío.
 - `503 {"detail": "..."}` si Mongo no responde.
+
+### Usuarios
+
+No hay registro: en el `frontend` se elige un usuario de la lista. Son los 2.000 del dataset, que solo figuran repetidos en cada reseña, y 5 nuevos (`usr_2001` a `usr_2005`) sin ningún voto, para probar el arranque en frío del recomendador.
+
+La colección `users` la carga el `backend` cada vez que arranca: `{_id, name, email, preloaded}`, con el `user_id` como `_id`.
+
+- **Por qué al arrancar el `backend`:** es automático, sirve también con un volumen ya cargado y no agrega un contenedor para un trabajo de menos de un segundo. Descartados: un servicio aparte; un endpoint, que alguien tendría que llamar; un script en `dataset/`, que solo corre con el volumen vacío y es la carpeta de la cátedra; y el `cleaning-agent`, que no corre si la base ya está limpia.
+- **Idempotente:** agrega los usuarios que faltan y no toca los que están. Por eso completa una carga cortada a la mitad y admite dos `backend` a la vez.
+- **No espera a la limpieza:** en el crudo, cada `user_id` tiene un solo nombre y un solo email. Solo se saltean las reseñas anónimas (B4), por id, y las del `ingest-consumer`, que no tienen nombre.
+- **Si Mongo no responde,** reintenta cada 5 s. El resto del `backend` no espera.
+- **Privacidad:** el email sirve para buscar, pero la API no lo devuelve. Los nombres se repiten (432 los comparten varios usuarios): lo que distingue a dos usuarios es el id.
+
+`GET /users` (en el `frontend`, `/api/users`):
+
+- Parámetro: `q` (texto contenido en el nombre, el email o el id, hasta 100 caracteres; opcional). Más largo: 422.
+- `200 {"items": [{"id", "name", "preloaded"}], "total"}`. Hasta 20, con los nuevos (`preloaded`) primero y después por nombre; `total` cuenta todos los que coinciden.
+- `503 {"detail": "..."}` si los usuarios todavía se están cargando o Mongo no responde.
 
 ## Flujos
 
@@ -249,7 +267,7 @@ Decisiones abiertas:
 
 Para el `backend`:
 
-- **Colección `users`** (acordada el 2026-11-23, sin implementar): un documento por usuario con su `user_id`, nombre y email. Los mensajes de `interactions` llevan solo `user_id`, así que **las reseñas nuevas no tienen `user_name` ni `user_email`**: el `backend` los resuelve por `user_id` al leer. Tiene que incluir los 2.000 usuarios del dataset, cuyos datos hoy están solo en `reviews`, y los usuarios nuevos precargados, que no tienen ninguna reseña. Falta definir quién la carga y cuándo.
+- **Nombre en las reseñas nuevas:** los mensajes de `interactions` llevan solo `user_id`, así que las reseñas que crea el `ingest-consumer` no tienen `user_name`. Al leerlas, el `backend` tiene que resolverlo por `user_id` en `users`.
 - **Publicar los votos** con `Interaction` y `encode` de [interactions.py](libs/common/dcicflix_common/interactions.py), que define y valida el formato. Un `InvalidInteraction` al construirlo corresponde a una petición inválida. `votedAt` es la hora del `backend`, no la del navegador.
 
 Secciones a completar con la implementación:
