@@ -14,7 +14,7 @@ docker compose up --build
 
 No requiere pasos manuales: la carga del dataset, la declaración de colas, la limpieza y el entrenamiento inicial se coordinan entre los contenedores.
 
-La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el estado del sistema, que consulta a `/api/health` cada 5 s.
+La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el catálogo con búsqueda por título (`/api/movies`) y, arriba, un aviso mientras se limpian los datos o se preparan las recomendaciones (`/api/status`).
 
 - **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
 - **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
@@ -43,6 +43,7 @@ pytest -m static                            # no necesita nada levantado
 docker compose up -d --wait && pytest       # todo menos slow, con el sistema levantado
 pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~5 min)
 pytest services/recommender                 # tests unitarios del recommender, aparte (ver abajo)
+pytest services/backend                     # tests unitarios del backend, aparte
 ```
 
 Los tests del `recommender` corren en una invocación aparte, con su propio `pytest.ini`: él y el `cleaning-agent` tienen un paquete `app`, y en un mismo proceso de pytest solo se puede importar uno.
@@ -151,6 +152,32 @@ Los eventos disparan trabajo entre servicios; `GET /status` responde siempre a p
 
 El `frontend` consulta `GET /status` cada pocos segundos mientras el estado no sea `ready`, y luego deja de consultar.
 
+Respuesta de `GET /status` (en el `frontend`, `/api/status`):
+
+- `200 {"state": "cleaning" | "indexing" | "ready"}`.
+- `503 {"detail": "..."}` si no puede leer la marca (Mongo no responde). No responde `cleaning`: sería informar un estado que no conoce.
+
+Que el recomendador esté listo sale del campo `ready` de su `/health`, no del código HTTP: mientras embebe o indexa responde 200 (está sano, pero no listo). El `backend` lo anota en el chequeo que ya hace cada 10 s para su propio `/health`, así el costo de `/status` no depende de cuántos navegadores consulten. El paso a `ready` puede verse hasta 10 s tarde.
+
+Si el `recommender` se cae después de `ready`, el estado vuelve a `indexing`, pero el `frontend` ya no consulta. El `backend` igual rechaza votos y recomendaciones; cuando una de esas acciones falla por el estado, el `frontend` vuelve a consultar `/status` hasta recuperar `ready` (se implementa con esas funciones).
+
+### Catálogo
+
+La consigna pide que el catálogo se pueda recorrer en todo momento, también mientras se limpia. En ese rato `movies` tiene los datos crudos (años y géneros como texto, duplicados, sin `deleted`) y el `cleaning-agent` los va reemplazando.
+
+**Criterio: el `backend` valida, no corrige.** Cada campo se devuelve solo si cumple lo que garantiza el contrato limpio ([ANOMALIAS.md](analysis/ANOMALIAS.md), sección 7); si no, sale `null` y el `frontend` no lo muestra. Corregir es trabajo del `cleaning-agent`: repetir sus reglas en el `backend` sería mantenerlas en dos lugares para cubrir los segundos que dura la limpieza. Mientras tanto pueden verse duplicados o datos faltantes; al terminar, el catálogo muestra los datos limpios sin hacer nada.
+
+- Se filtra con `deleted != true` y no con `deleted: false`: los documentos crudos todavía no tienen el campo.
+- Se ordena de más a menos votada en IMDb. Los votos que no son número (en el crudo, `"1,208"`) cuentan como desconocidos y van al final: si no, Mongo los ordenaría primero. El `_id` desempata, para que ninguna película se repita o falte entre páginas.
+- La búsqueda reemplaza los caracteres no ASCII de la consulta por `è`, como hizo la fuente con los títulos (A13): "Amélie" encuentra "Amèlie".
+- Las carátulas que no cargan (≈12 %) se reemplazan en el `frontend` por una genérica con el título.
+
+`GET /movies` (en el `frontend`, `/api/movies`):
+
+- Parámetros: `q` (texto del título, hasta 100 caracteres; opcional) y `page` (desde 1). Fuera de rango: 422.
+- `200 {"items": [{"id", "title", "year", "poster", "genres", "imdbRating"}], "page", "pageSize": 24, "total"}`. Una página más allá del final trae `items` vacío.
+- `503 {"detail": "..."}` si Mongo no responde.
+
 ## Flujos
 
 ### Arranque en frío
@@ -218,7 +245,6 @@ El `cleaning-agent` limpia el dataset una sola vez, en el primer arranque. El de
 Decisiones abiertas:
 
 - **LLM:** se asume API externa con API key, a confirmar con la cátedra. Si pasa a ser un modelo local, se agrega un contenedor `ollama` y se elimina `egress-net`.
-- **Lectura de datos sucios:** cómo tolera el `backend` los formatos corruptos mientras dura la limpieza.
 - **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
 
 Para el `backend`:
