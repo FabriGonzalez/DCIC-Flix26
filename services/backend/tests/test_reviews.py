@@ -4,7 +4,7 @@ from datetime import datetime
 import pytest
 from bson import ObjectId
 
-from app import reviews
+from app import reviews, users
 
 ID = ObjectId()
 MOVIE = ObjectId()
@@ -138,6 +138,61 @@ def test_newest_first_and_dates_as_text_last(mongo_uri):
 def test_email_never_leaves_mongo(mongo_uri):
     insert(mongo_uri, [make("Con mail", datetime(2024, 1, 1))])
     assert "x@y.z" not in str(run_list(mongo_uri, str(MOVIE)))
+
+
+def insert_users(mongo_uri: str, names: dict[str, str]) -> None:
+    import pymongo
+
+    with pymongo.MongoClient(mongo_uri) as client:
+        client.get_default_database()[users.COLLECTION].insert_many(
+            {"_id": user_id, "name": name, "email": "x@y.z", "preloaded": False} for user_id, name in names.items()
+        )
+
+
+def names_by_comment(mongo_uri: str) -> dict:
+    return {r["comment"]: r["userName"] for r in run_list(mongo_uri, str(MOVIE))["items"]}
+
+
+@pytest.mark.mongo
+def test_reviews_without_name_take_it_from_users(mongo_uri):
+    # Las del ingest-consumer: sin user_name ni user_email.
+    insert(mongo_uri, [
+        make("Del dataset", datetime(2024, 1, 1), user_id="usr_0001", user_name="Leo Roberts"),
+        make("Nueva", datetime(2024, 1, 2), user_id="usr_2001"),
+        make("Otra nueva", datetime(2024, 1, 3), user_id="usr_2002"),
+        make("De nadie", datetime(2024, 1, 4), user_id="usr_9999"),
+    ])
+    insert_users(mongo_uri, {"usr_0001": "Otro", "usr_2001": "Ana Torres", "usr_2002": "Bruno Medina"})
+    assert names_by_comment(mongo_uri) == {
+        "Del dataset": "Leo Roberts",  # el que trae la reseña no se toca
+        "Nueva": "Ana Torres",
+        "Otra nueva": "Bruno Medina",
+        "De nadie": None,
+    }
+    assert "x@y.z" not in str(run_list(mongo_uri, str(MOVIE)))
+
+
+@pytest.mark.mongo
+def test_blank_name_is_not_looked_up(mongo_uri):
+    # En el crudo: el campo está, aunque no sirva. No es una reseña del ingest-consumer.
+    insert(mongo_uri, [make("Cruda", datetime(2024, 1, 1), user_id="usr_0001", user_name="")])
+    insert_users(mongo_uri, {"usr_0001": "Leo Roberts"})
+    assert names_by_comment(mongo_uri) == {"Cruda": None}
+
+
+@pytest.mark.mongo
+@pytest.mark.parametrize("extra, expected", [({"user_name": "Leo Roberts"}, 0), ({}, 1)])
+def test_users_is_queried_at_most_once(mongo_uri, monkeypatch, extra, expected):
+    calls = []
+
+    async def fake_names(mongo, user_ids):
+        calls.append(user_ids)
+        return {}
+
+    monkeypatch.setattr(users, "names", fake_names)
+    insert(mongo_uri, [make(f"{i}", datetime(2024, 1, 1), user_id=f"usr_{i}", **extra) for i in range(3)])
+    run_list(mongo_uri, str(MOVIE))
+    assert len(calls) == expected
 
 
 @pytest.mark.mongo
