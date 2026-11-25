@@ -1,5 +1,5 @@
 """backend: /health (D12), /status (status.py), /movies (catalog.py), la ficha (movie.py,
-reviews.py) y /users (users.py).
+reviews.py), los votos (votes.py, publisher.py) y /users (users.py).
 
 Críticas: Mongo, Rabbit y la topología. Informativa: el recommender. Si no está
 listo, el backend sigue sano y el catálogo, navegable.
@@ -11,10 +11,11 @@ Ante un error irrecuperable (D14), detiene uvicorn y el proceso termina con cód
 import logging
 import sys
 from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Query, Response
+from fastapi import Body, FastAPI, Query, Response
 from pymongo.errors import PyMongoError
 
 from dcicflix_common import config
@@ -22,7 +23,7 @@ from dcicflix_common import logging as logs
 from dcicflix_common.aio.service import DataService
 from dcicflix_common.config import ConfigError
 
-from app import catalog, movie, reviews, status, users
+from app import catalog, movie, publisher, reviews, status, users, votes
 
 SERVICE = "backend"
 PORT = 8000
@@ -97,6 +98,28 @@ def create_app(on_fatal) -> FastAPI:
             response.status_code = 404
             return {"detail": "no existe la película"}
         return found
+
+    @app.post("/movies/{movie_id}/reviews", status_code=202)
+    async def vote(movie_id: str, response: Response, body: Any = Body(None)) -> dict:
+        # Any: el formato lo valida Interaction, con las mismas reglas que el ingest-consumer.
+        try:
+            new_vote = votes.build(movie_id, body)
+            await votes.submit(
+                data.mongo,
+                new_vote,
+                recommender_ready=recommender.ready,
+                users_loaded=user_loader.loaded,
+                publish=lambda v: publisher.publish(data.rabbit, v),
+            )
+        except votes.Rejected as exc:
+            if exc.status_code == 503:
+                log.warning("voto rechazado: %s (%s)", exc.detail, exc.__cause__)
+            response.status_code = exc.status_code
+            return {"detail": exc.detail}
+        except PyMongoError:
+            response.status_code = 503
+            return {"detail": "no se pudo comprobar el voto"}
+        return votes.to_response(new_vote)
 
     @app.get("/users")
     async def list_users(response: Response, q: str = Query("", max_length=100)) -> dict:

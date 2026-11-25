@@ -93,6 +93,12 @@ async def list_users(mongo: AsyncMongoClient, query: str) -> dict:
     }
 
 
+async def names(mongo: AsyncMongoClient, user_ids: set[str]) -> dict[str, str]:
+    """El nombre de cada id. Los que no existen no figuran."""
+    cursor = mongo.get_default_database()[COLLECTION].find({"_id": {"$in": list(user_ids)}}, {"name": 1})
+    return {d["_id"]: d["name"] for d in await cursor.to_list()}
+
+
 class UserLoader:
     """Carga los usuarios en segundo plano, reintentando mientras Mongo no responda.
 

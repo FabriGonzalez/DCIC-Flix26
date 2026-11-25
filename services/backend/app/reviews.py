@@ -11,14 +11,16 @@ from typing import Any
 from bson import ObjectId
 from pymongo import AsyncMongoClient
 
-from app import catalog
+from app import catalog, users
 
 COLLECTION = "reviews"
 # Hoy el máximo es 42 por película: el tope es una protección, no una paginación.
 LIMIT = 100
 
-# Solo lo que muestra la ficha. user_email no sale nunca de Mongo.
-REVIEW_FIELDS = {"user_name": 1, "rating": 1, "comment": 1, "commentHidden": 1, "date": 1, "datePrecision": 1}
+# Solo lo que muestra la ficha, y user_id para resolver el nombre. user_email no sale nunca de Mongo.
+REVIEW_FIELDS = {
+    "user_id": 1, "user_name": 1, "rating": 1, "comment": 1, "commentHidden": 1, "date": 1, "datePrecision": 1,
+}  # fmt: skip
 
 
 def _iso_date(value: Any) -> str | None:
@@ -65,6 +67,20 @@ def pipeline(movie_id: ObjectId) -> list[dict]:
     ]
 
 
+async def _fill_names(mongo: AsyncMongoClient, documents: list[dict]) -> None:
+    """Completa user_name en las reseñas que creó el ingest-consumer, que solo tienen user_id.
+
+    Es una consulta para todas, y ninguna si no hay de esas. Sin el usuario en `users`, la
+    reseña queda sin nombre.
+    """
+    nameless = [d for d in documents if "user_name" not in d and "user_id" in d]
+    if not nameless:
+        return
+    names = await users.names(mongo, {d["user_id"] for d in nameless})
+    for document in nameless:
+        document["user_name"] = names.get(document["user_id"])
+
+
 async def list_reviews(mongo: AsyncMongoClient, movie_id: str) -> dict | None:
     """Las reseñas, o None si el id no es válido. Lanza PyMongoError si Mongo no responde.
 
@@ -76,4 +92,6 @@ async def list_reviews(mongo: AsyncMongoClient, movie_id: str) -> dict | None:
     oid = ObjectId(movie_id)
     total = await collection.count_documents({"movie_id": oid, **catalog.ACTIVE})
     cursor = await collection.aggregate(pipeline(oid))
-    return {"items": [to_review(d) for d in await cursor.to_list()], "total": total}
+    documents = await cursor.to_list()
+    await _fill_names(mongo, documents)
+    return {"items": [to_review(d) for d in documents], "total": total}

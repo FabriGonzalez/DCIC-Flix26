@@ -1,4 +1,4 @@
-"""Votos de prueba por la cola real, para los tests del ingest-consumer.
+"""Votos de prueba, por la cola real (tests del ingest-consumer) o por la API.
 
 Usan un usuario nuevo en cada test y se borran al terminar: la base queda como estaba.
 """
@@ -47,6 +47,8 @@ def is_drained() -> bool:
 class Voter:
     """Un usuario de prueba que vota una película activa."""
 
+    NAME = "Votante de prueba"
+
     def __init__(self):
         movie = mongo("db.movies.findOne({deleted: false}, {num_mflix_comments: 1})")
         if movie is None:
@@ -69,6 +71,15 @@ class Voter:
         result = compose.exec_python(_CLIENT, _PUBLISH, topology.INTERACTIONS_QUEUE, body)
         assert result.returncode == 0, result.stderr
 
+    def register(self) -> None:
+        """Agrega el usuario a `users`: sin eso, la API no acepta sus votos."""
+        mongo(f'db.users.insertOne({{_id: "{self.user_id}", name: "{self.NAME}", email: "", preloaded: false}})')
+
+    def post(self, rating: int) -> int:
+        """Vota por la API, a través del frontend. Devuelve el código HTTP."""
+        body = {"userId": self.user_id, "rating": rating, "comment": "Muy buena"}
+        return compose.post_to_frontend(f"/api/movies/{self.movie_id}/reviews", body)[0]
+
     def saved(self) -> list[int]:
         """Las estrellas de los votos guardados: con uno solo, una lista de un elemento."""
         return mongo(f'db.reviews.find({{user_id: "{self.user_id}"}}).toArray().map(r => r.rating)')
@@ -80,6 +91,7 @@ class Voter:
     def clean(self) -> None:
         # Sin assert: si Mongo no volvió, la falla ya está informada en el test.
         compose.mongosh(f"""
+            db.users.deleteOne({{_id: "{self.user_id}"}});
             db.reviews.deleteMany({{user_id: "{self.user_id}"}});
             db.movies.updateOne(
                 {{_id: ObjectId("{self.movie_id}")}}, {{$set: {{num_mflix_comments: {self.initial_count}}}}});

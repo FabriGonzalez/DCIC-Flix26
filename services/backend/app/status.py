@@ -47,7 +47,11 @@ class RecommenderProbe:
 
     async def check(self) -> None:
         # Si el pedido falla, queda en False: un recommender que no responde no está listo.
-        self.ready = False
-        response = await self._http.get(f"{self._url}/health")
-        response.raise_for_status()  # 503: el recommender responde, pero no está sano
-        self.ready = response.json().get("ready") is True
+        # Cambia una sola vez, al final: mientras pregunta vale la respuesta anterior.
+        ready = False
+        try:
+            response = await self._http.get(f"{self._url}/health")
+            response.raise_for_status()  # 503: el recommender responde, pero no está sano
+            ready = response.json().get("ready") is True
+        finally:
+            self.ready = ready

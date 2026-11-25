@@ -74,3 +74,33 @@ def test_probe_goes_back_to_not_ready_when_recommender_falls():
     with pytest.raises(httpx.ConnectError):
         run_check(probe)
     assert not probe.ready
+
+
+def test_probe_keeps_the_last_answer_while_it_asks_again():
+    # Si no, cada 10 s habría un instante en "indexing", y un voto en ese instante daría 409.
+    seen = []
+
+    def handler(request):
+        seen.append(probe.ready)
+        return httpx.Response(200, json={"ready": True})
+
+    probe = probe_answering(handler)
+    run_check(probe)
+    run_check(probe)
+    assert seen == [False, True]
+    assert probe.ready
+
+
+def test_probe_cancelled_by_the_monitor_is_not_ready():
+    # El monitor corta un chequeo que tarda demasiado.
+    async def hung(request):
+        await asyncio.sleep(60)
+
+    async def go():
+        probe = probe_answering(hung)
+        probe.ready = True
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(probe.check(), 0.05)
+        return probe
+
+    assert not asyncio.run(go()).ready

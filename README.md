@@ -41,7 +41,7 @@ python -m venv .venv                        # Python 3.12
 pip install -r tests/requirements.txt
 pytest -m static                            # no necesita nada levantado
 docker compose up -d --wait && pytest       # todo menos slow, con el sistema levantado
-pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~5 min)
+pytest -m slow                              # persistencia y reconexión: baja y levanta el sistema (~7 min)
 pytest services/recommender                 # tests unitarios del recommender, aparte (ver abajo)
 pytest services/backend                     # tests unitarios del backend, aparte
 ```
@@ -159,6 +159,8 @@ Respuesta de `GET /status` (en el `frontend`, `/api/status`):
 
 Que el recomendador esté listo sale del campo `ready` de su `/health`, no del código HTTP: mientras embebe o indexa responde 200 (está sano, pero no listo). El `backend` lo anota en el chequeo que ya hace cada 10 s para su propio `/health`, así el costo de `/status` no depende de cuántos navegadores consulten. El paso a `ready` puede verse hasta 10 s tarde.
 
+Un 503 del `recommender` (perdió Mongo o RabbitMQ) cuenta como no listo, aunque conserve el índice en memoria. Como los dos chequean cada 10 s por separado, después de una caída breve el estado puede quedar en `indexing` entre 10 y 20 s más. Es a propósito: se prefiere informar que no está listo de más y no de menos.
+
 Si el `recommender` se cae después de `ready`, el estado vuelve a `indexing`, pero el `frontend` ya no consulta. El `backend` igual rechaza votos y recomendaciones; cuando una de esas acciones falla por el estado, el `frontend` vuelve a consultar `/status` hasta recuperar `ready` (se implementa con esas funciones).
 
 ### Catálogo
@@ -188,6 +190,7 @@ Cada película tiene su página en `/movies/{id}`, con sus datos, la sinopsis y 
 - **Reseñas durante la limpieza:** se muestran las crudas, validadas. Pueden verse comentarios basura, anónimas o votos repetidos hasta que termine; el aviso de estado lo explica.
 - **Reseñas incompletas:** el soft delete es lo único que saca una reseña. `commentHidden` oculta solo el texto (quedan nombre, estrellas y fecha), y `rating: null` (sin LLM) solo las estrellas ("Sin puntaje").
 - **Total:** sale del conteo de reseñas activas, no de `num_mflix_comments`, que no cuenta las de comentario oculto.
+- **Nombre:** las reseñas del dataset lo traen. Las que crea el `ingest-consumer` tienen solo `user_id`, y el nombre se busca en `users`: una consulta para todas, y ninguna si no hay de esas.
 - **Privacidad:** la API no devuelve `user_email`.
 
 `GET /movies/{id}` (en el `frontend`, `/api/movies/{id}`):
@@ -252,14 +255,31 @@ El detalle y las alternativas descartadas están en [ANOMALIAS.md](analysis/ANOM
 ### Voto con reseña
 
 1. El `frontend` envía usuario, película, estrellas y texto al `backend`.
-2. El `backend` valida el formato y que el estado sea `ready`; si no lo es, rechaza la petición.
-3. El `backend` publica el mensaje en `interactions`, con solo el `user_id` del usuario, y responde "aceptado" sin esperar a MongoDB.
+2. El `backend` comprueba el formato, que el estado sea `ready` y que existan el usuario y la película; si no, rechaza la petición.
+3. El `backend` publica el mensaje en `interactions`, con solo el `user_id` del usuario. Cuando RabbitMQ confirma que lo recibió, responde "aceptado", sin esperar a que se guarde en MongoDB.
 4. `ingest-consumer` toma el mensaje, lo guarda reemplazando el voto previo del mismo usuario para esa película y actualiza el contador de reseñas. Recién entonces confirma el mensaje.
 5. Si el mensaje no se puede guardar (formato inválido, película inexistente o un error inesperado), se deriva a `interactions.errors` y la cola sigue. Si el problema es que MongoDB no responde, el mensaje espera y se reintenta.
 
 RabbitMQ puede entregar el mismo voto más de una vez, por ejemplo si el consumer se cae entre guardar y confirmar. Guardarlo otra vez no cambia nada. Las decisiones y las pruebas de fallas están en [docs/ingest-consumer.md](docs/ingest-consumer.md).
 
 La reseña no aparece al instante en la ficha: el `frontend` la muestra como enviada hasta la próxima lectura.
+
+`POST /movies/{id}/reviews` (en el `frontend`, `/api/movies/{id}/reviews`), con `{"userId", "rating", "comment"}` (`comment` es opcional):
+
+| Código | Cuándo | Qué hace el `frontend` |
+| :--- | :--- | :--- |
+| `202 {"movieId", "userId", "rating", "comment", "votedAt"}` | Aceptado: no se va a perder, aunque todavía no esté guardado | La muestra como enviada |
+| `422` | Formato inválido | Muestra el error |
+| `404` | No existe el usuario o la película, o la película no está activa | Muestra el error |
+| `409` | El estado no es `ready` | Vuelve a consultar `/status` |
+| `503` | Mongo o RabbitMQ no responden, o los usuarios se están cargando | Ofrece reintentar |
+
+- El 409 distingue "el sistema funciona, pero todavía no se puede votar" de una caída (503).
+- Ante un 503, reintentar es seguro: si el voto había llegado, el nuevo lo reemplaza.
+- La hora la pone el `backend`; si el cuerpo trae `votedAt`, se ignora.
+- Un JSON mal formado da 400 o 422 con `detail` como lista, y un cuerpo de más de 1 MB, 413 en HTML (nginx): conviene guiarse por el código.
+
+Por qué se comprueba antes y qué se delega está en [docs/ingest-consumer.md](docs/ingest-consumer.md), sección 8.
 
 ### Recomendaciones
 
@@ -289,10 +309,9 @@ Decisiones abiertas:
 - **LLM:** se asume API externa con API key, a confirmar con la cátedra. Si pasa a ser un modelo local, se agrega un contenedor `ollama` y se elimina `egress-net`.
 - **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
 
-Para el `backend`:
+Para el `frontend`:
 
-- **Nombre en las reseñas nuevas:** los mensajes de `interactions` llevan solo `user_id`, así que las reseñas que crea el `ingest-consumer` no tienen `user_name`. Al leerlas, el `backend` tiene que resolverlo por `user_id` en `users`.
-- **Publicar los votos** con `Interaction` y `encode` de [interactions.py](libs/common/dcicflix_common/interactions.py), que define y valida el formato. Un `InvalidInteraction` al construirlo corresponde a una petición inválida. `votedAt` es la hora del `backend`, no la del navegador.
+- **Selector de usuario y formulario de voto.** Las API están (secciones "Usuarios" y "Voto con reseña"). Los nombres se repiten: para reconocer la reseña propia, `GET /movies/{id}/reviews` tiene que devolver también `userId`.
 
 Secciones a completar con la implementación:
 
