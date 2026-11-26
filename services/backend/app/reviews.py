@@ -11,13 +11,15 @@ from typing import Any
 from bson import ObjectId
 from pymongo import AsyncMongoClient
 
+from dcicflix_common.interactions import ANONYMOUS_ID
+
 from app import catalog, users
 
 COLLECTION = "reviews"
-# Hoy el máximo es 42 por película: el tope es una protección, no una paginación.
+# Hoy el máximo es 55 por película: el tope es una protección, no una paginación.
 LIMIT = 100
 
-# Solo lo que muestra la ficha, y user_id para resolver el nombre. user_email no sale nunca de Mongo.
+# Solo lo que muestra la ficha, y user_id, que también sale. user_email no sale nunca de Mongo.
 REVIEW_FIELDS = {
     "user_id": 1, "user_name": 1, "rating": 1, "comment": 1, "commentHidden": 1, "date": 1, "datePrecision": 1,
 }  # fmt: skip
@@ -33,6 +35,7 @@ def _iso_date(value: Any) -> str | None:
 
 def to_review(document: dict) -> dict:
     """Una reseña de Mongo (limpia o cruda) a la forma que muestra la ficha."""
+    user_id = document.get("user_id")
     name = document.get("user_name")
     rating = document.get("rating")
     comment = document.get("comment")
@@ -40,6 +43,8 @@ def to_review(document: dict) -> dict:
     precision = document.get("datePrecision")
     return {
         "id": str(document["_id"]),
+        # Para reconocer la reseña propia: los nombres se repiten. El anónimo (B4) no es nadie.
+        "userId": user_id if isinstance(user_id, str) and user_id.strip() and user_id != ANONYMOUS_ID else None,
         "userName": name.strip() if isinstance(name, str) and name.strip() else None,
         # '4' en texto, 10 o 999 (B5, B14) no cumplen: salen null.
         "rating": rating if isinstance(rating, int) and not isinstance(rating, bool) and 1 <= rating <= 5 else None,

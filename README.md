@@ -192,6 +192,7 @@ Cada película tiene su página en `/movies/{id}`, con sus datos, la sinopsis y 
 - **Total:** sale del conteo de reseñas activas, no de `num_mflix_comments`, que no cuenta las de comentario oculto.
 - **Nombre:** las reseñas del dataset lo traen. Las que crea el `ingest-consumer` tienen solo `user_id`, y el nombre se busca en `users`: una consulta para todas, y ninguna si no hay de esas.
 - **Privacidad:** la API no devuelve `user_email`.
+- **Reseña propia:** cada reseña trae `userId`, porque los nombres se repiten (hay 136 casos de dos o más reseñas activas de una película con el mismo nombre). Las anónimas (B4) traen `null`.
 
 `GET /movies/{id}` (en el `frontend`, `/api/movies/{id}`):
 
@@ -201,7 +202,7 @@ Cada película tiene su página en `/movies/{id}`, con sus datos, la sinopsis y 
 
 `GET /movies/{id}/reviews` (en el `frontend`, `/api/movies/{id}/reviews`):
 
-- `200 {"items": [{"id", "userName", "rating", "comment", "date", "datePrecision"}], "total"}`. Las activas, de la más reciente a la más vieja; sin fecha válida, al final. Hasta 100 (hoy el máximo es 42 por película); `total` cuenta todas. `date` es ISO en UTC; con `datePrecision: "year"` (las `circa`) se muestra solo el año.
+- `200 {"items": [{"id", "userId", "userName", "rating", "comment", "date", "datePrecision"}], "total"}`. Las activas, de la más reciente a la más vieja; sin fecha válida, al final. Hasta 100 (hoy el máximo es 55 por película); `total` cuenta todas. `date` es ISO en UTC; con `datePrecision: "year"` (las `circa`) se muestra solo el año.
 - No comprueba que la película exista: un id que no es de ninguna da `items` vacío.
 - `404` si el id no es válido; `503` si Mongo no responde.
 
@@ -311,7 +312,7 @@ Decisiones abiertas:
 
 Para el `frontend`:
 
-- **Selector de usuario y formulario de voto.** Las API están (secciones "Usuarios" y "Voto con reseña"). Los nombres se repiten: para reconocer la reseña propia, `GET /movies/{id}/reviews` tiene que devolver también `userId`.
+- **Selector de usuario y formulario de voto.** Las API están (secciones "Usuarios", "Ficha" y "Voto con reseña").
 
 Secciones a completar con la implementación:
 
