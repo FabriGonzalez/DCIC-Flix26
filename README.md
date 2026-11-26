@@ -14,7 +14,7 @@ docker compose up --build
 
 No requiere pasos manuales: la carga del dataset, la declaración de colas, la limpieza y el entrenamiento inicial se coordinan entre los contenedores.
 
-La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el catálogo con búsqueda por título (`/api/movies`) y, arriba, un aviso mientras se limpian los datos o se preparan las recomendaciones (`/api/status`).
+La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el catálogo con búsqueda por título (`/api/movies`), la ficha de cada película con sus reseñas (`/api/movies/{id}` y `/api/movies/{id}/reviews`) y, cuando las recomendaciones están listas, sus películas similares (`/api/movies/{id}/similar`). Arriba, un aviso mientras se limpian los datos o se preparan las recomendaciones (`/api/status`).
 
 - **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
 - **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
@@ -290,6 +290,8 @@ Por qué se comprueba antes y qué se delega está en [docs/ingest-consumer.md](
 Ninguna petición reentrena el modelo ni calcula similitudes contra todo el catálogo.
 
 El `recommender` expone `GET /users/{user_id}/recommendations`, `GET /movies/{movie_id}/similar`, `GET /rankings` y `GET /genres`, todos solo en `internal-net`. Mientras no termina de indexar responden 503. El detalle está en [docs/recomendador.md](docs/recomendador.md), sección 9.4.
+
+El `backend` expone las similares de una película en `GET /movies/{id}/similar` (12, con la misma tarjeta que el catálogo). Igual que los votos, responde `409` si el estado no es `ready` y `503` si el `recommender` no responde; en los dos casos el `frontend` vuelve a consultar `/status`.
 
 ## Limpieza de datos
 

@@ -1,6 +1,6 @@
 // Estado del sistema según GET /api/status (README, "Estado del sistema").
 
-import { useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 export type SystemState = "cleaning" | "indexing" | "ready";
 
@@ -27,9 +27,16 @@ export async function fetchStatus(): Promise<StatusResult> {
   }
 }
 
-/** Consulta el estado cada POLL_MS hasta que es "ready"; después deja de consultar. */
-export function useSystemStatus(): StatusResult {
+export interface SystemStatus {
+  result: StatusResult;
+  /** Vuelve a consultar hasta "ready": cuando una acción falla por el estado (README, "Estado del sistema"). */
+  recheck: () => void;
+}
+
+/** Consulta el estado cada POLL_MS hasta que es "ready"; después deja de consultar, hasta un recheck(). */
+export function useStatusPolling(): SystemStatus {
   const [result, setResult] = useState<StatusResult>({ kind: "loading" });
+  const [round, setRound] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -49,7 +56,21 @@ export function useSystemStatus(): StatusResult {
       active = false;
       clearTimeout(timer);
     };
-  }, []);
+  }, [round]);
 
-  return result;
+  const recheck = useCallback(() => setRound((n) => n + 1), []);
+  return { result, recheck };
+}
+
+// Una sola consulta para toda la app: la provee App y la leen el aviso y las pantallas.
+export const StatusContext = createContext<SystemStatus | null>(null);
+
+export function useSystemStatus(): SystemStatus {
+  const status = useContext(StatusContext);
+  if (status === null) throw new Error("useSystemStatus fuera de StatusContext");
+  return status;
+}
+
+export function isReady(result: StatusResult): boolean {
+  return result.kind === "known" && result.state === "ready";
 }
