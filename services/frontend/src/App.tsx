@@ -3,9 +3,17 @@ import { Link, Route, Routes } from "react-router";
 import { Catalog } from "./Catalog";
 import { MovieDetailPage } from "./MovieDetail";
 import { NotFound } from "./NotFound";
-import { useSystemStatus, type SystemState } from "./status";
+import { StatusContext, useStatusPolling, useSystemStatus, type SystemState } from "./status";
 
 export function App() {
+  return (
+    <StatusContext.Provider value={useStatusPolling()}>
+      <Layout />
+    </StatusContext.Provider>
+  );
+}
+
+function Layout() {
   return (
     <main className="page">
       <header>
@@ -38,7 +46,7 @@ const BANNERS: Record<Exclude<SystemState, "ready">, { title: string; detail: st
 };
 
 function StatusBanner() {
-  const status = useSystemStatus();
+  const status = useSystemStatus().result;
   if (status.kind === "loading") {
     return null;
   }

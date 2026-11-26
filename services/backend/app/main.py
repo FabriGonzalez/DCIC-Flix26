@@ -1,5 +1,5 @@
 """backend: /health (D12), /status (status.py), /movies (catalog.py), la ficha (movie.py,
-reviews.py), los votos (votes.py, publisher.py) y /users (users.py).
+reviews.py), las similares (similar.py), los votos (votes.py, publisher.py) y /users (users.py).
 
 Críticas: Mongo, Rabbit y la topología. Informativa: el recommender. Si no está
 listo, el backend sigue sano y el catálogo, navegable.
@@ -23,7 +23,7 @@ from dcicflix_common import logging as logs
 from dcicflix_common.aio.service import DataService
 from dcicflix_common.config import ConfigError
 
-from app import catalog, movie, publisher, reviews, status, users, votes
+from app import catalog, movie, publisher, reviews, similar, status, users, votes
 
 SERVICE = "backend"
 PORT = 8000
@@ -33,7 +33,8 @@ log = logging.getLogger(SERVICE)
 
 def create_app(on_fatal) -> FastAPI:
     http = httpx.AsyncClient(timeout=3)
-    recommender = status.RecommenderProbe(http, config.recommender_url())
+    recommender_url = config.recommender_url()
+    recommender = status.RecommenderProbe(http, recommender_url)
     data = DataService(SERVICE, on_fatal=on_fatal, info={"recommender": recommender.check})
     user_loader = users.UserLoader(data.mongo, on_fatal=on_fatal)
 
@@ -131,6 +132,28 @@ def create_app(on_fatal) -> FastAPI:
         except PyMongoError:
             response.status_code = 503
             return {"detail": "no se pudieron leer los usuarios"}
+
+    @app.get("/movies/{movie_id}/similar")
+    async def similar_movies(movie_id: str, response: Response) -> dict:
+        # Recomendaciones solo en "ready". Como en los votos (votes.py): 409 si el sistema
+        # funciona pero no está listo, 503 si algo se cayó; el frontend vuelve a consultar /status.
+        try:
+            if status.combine(await status.read_mark(data.mongo), recommender.ready) != status.READY:
+                response.status_code = 409
+                return {"detail": "las recomendaciones se habilitan cuando el sistema está listo"}
+            found = await similar.list_similar(http, recommender_url, data.mongo, movie_id)
+        except similar.RecommenderUnavailable as exc:
+            # El monitor puede tardar hasta 10 s en notar que se cayó: mientras, /status dice ready.
+            log.warning("similares sin recommender: %s", exc)
+            response.status_code = 503
+            return {"detail": "el recomendador no está disponible"}
+        except PyMongoError:
+            response.status_code = 503
+            return {"detail": "no se pudieron leer las películas similares"}
+        if found is None:
+            response.status_code = 404
+            return {"detail": "no existe la película"}
+        return {"items": found}
 
     return app
 

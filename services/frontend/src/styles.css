@@ -238,11 +238,13 @@ a.movie:focus-visible h2 {
   margin: 0;
 }
 
-.reviews-section {
+.reviews-section,
+.similar-section {
   margin-top: 2.5rem;
 }
 
-.reviews-section h3 {
+.reviews-section h3,
+.similar-section h3 {
   margin: 0 0 0.25rem;
 }
 
