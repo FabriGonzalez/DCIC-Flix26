@@ -14,7 +14,7 @@ docker compose up --build
 
 No requiere pasos manuales: la carga del dataset, la declaración de colas, la limpieza y el entrenamiento inicial se coordinan entre los contenedores.
 
-La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el catálogo con búsqueda por título (`/api/movies`) y, arriba, un aviso mientras se limpian los datos o se preparan las recomendaciones (`/api/status`).
+La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora tiene el catálogo con búsqueda por título, la ficha de cada película con sus reseñas, la elección de usuario (arriba a la derecha) y el voto con reseña desde la ficha. Arriba se avisa mientras se limpian los datos o se preparan las recomendaciones; en ese rato el catálogo se puede recorrer, pero todavía no se puede votar.
 
 - **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
 - **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
@@ -274,6 +274,8 @@ En la ficha, "Tu voto" vota en nombre del usuario elegido en el encabezado (secc
 - **Estrellas:** cinco radios, que funcionan con el teclado (flechas) y con lectores de pantalla. El comentario tiene el mismo tope que el `backend`, 5.000 caracteres.
 - **Ante un error,** lo escrito se conserva. Con 503 o sin respuesta (8 s), el botón ofrece reintentar.
 - **Límite:** "Enviada" sobrevive a navegar dentro de la app, pero no a recargar. Si se recarga antes de que se guarde (con el `ingest-consumer` detenido, por ejemplo), se ve el voto anterior hasta que se guarda. El voto no se pierde.
+
+Las decisiones del `frontend` y las pruebas con el navegador están en [docs/frontend-votos.md](docs/frontend-votos.md).
 
 `POST /movies/{id}/reviews` (en el `frontend`, `/api/movies/{id}/reviews`), con `{"userId", "rating", "comment"}` (`comment` es opcional):
 
