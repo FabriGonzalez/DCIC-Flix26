@@ -85,3 +85,7 @@ export function useSystemStatus(): SystemStatus {
   }
   return status;
 }
+
+export function isReady(result: StatusResult): boolean {
+  return result.kind === "known" && result.state === "ready";
+}

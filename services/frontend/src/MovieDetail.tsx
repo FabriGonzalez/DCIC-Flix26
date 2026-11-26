@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
+import { Card } from "./Catalog";
 import { NotFound } from "./NotFound";
 import {
   fetchMovie,
@@ -15,6 +16,8 @@ import {
 } from "./movie";
 import { usePendingVotes } from "./pending";
 import { Poster } from "./Poster";
+import { fetchSimilar, type SimilarResult } from "./similar";
+import { isReady, useSystemStatus } from "./status";
 import { useUser } from "./user";
 import { VoteForm } from "./VoteForm";
 
@@ -138,8 +141,9 @@ function Detail({ movie }: { movie: MovieDetail }) {
           </dl>
         </div>
       </div>
-      {/* Con el id de la respuesta: si era una copia fusionada, las reseñas y los votos van a la ganadora. */}
+      {/* Con el id de la respuesta: si era una copia fusionada, reseñas, votos y similares son los de la ganadora. */}
       <VoteAndReviews movieId={movie.id} />
+      <Similar movieId={movie.id} />
     </article>
   );
 }
@@ -226,6 +230,60 @@ function Reviews({
   return (
     <section className="reviews-section">
       <h3>Reseñas</h3>
+      {body}
+    </section>
+  );
+}
+
+/** Solo en "ready": mientras se limpia o indexa, las recomendaciones quedan en espera (consigna, punto 3). */
+function Similar({ movieId }: { movieId: string }) {
+  const { result: status, recheck } = useSystemStatus();
+  const ready = isReady(status);
+  const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState<SimilarResult>({ kind: "loading" });
+
+  useEffect(() => {
+    if (!ready) return;
+    const controller = new AbortController();
+    setResult({ kind: "loading" });
+    fetchSimilar(movieId, controller.signal).then((next) => {
+      if (controller.signal.aborted) return;
+      setResult(next);
+      // 409: dejó de estar listo después de "ready". 503: el recomendador no responde.
+      // En los dos casos el aviso vuelve a consultar el estado.
+      if (next.kind === "failed" && (next.status === 409 || next.status === 503)) recheck();
+    });
+    return () => controller.abort();
+  }, [movieId, attempt, ready, recheck]);
+
+  let body;
+  if (!ready) {
+    body = <p className="muted">Disponibles cuando terminen de prepararse las recomendaciones.</p>;
+  } else if (result.kind === "loading") {
+    body = <p className="muted">Cargando películas similares…</p>;
+  } else if (result.kind === "failed") {
+    body = (
+      <p className="muted">
+        No pudimos cargar las películas similares ({result.reason}) ·{" "}
+        <button className="link" onClick={() => setAttempt((n) => n + 1)}>Reintentar</button>
+      </p>
+    );
+  } else if (result.data.items.length === 0) {
+    body = <p className="muted">No encontramos películas similares.</p>;
+  } else {
+    body = (
+      <ul className="grid">
+        {result.data.items.map((movie) => (
+          <li key={movie.id}>
+            <Card movie={movie} />
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <section className="similar-section">
+      <h3>Películas similares</h3>
       {body}
     </section>
   );

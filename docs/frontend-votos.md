@@ -12,9 +12,10 @@ App
              ├─ encabezado        UserPicker.tsx  botón y <dialog> con búsqueda en /users
              ├─ aviso de estado   App.tsx
              └─ ficha             MovieDetail.tsx
-                  └─ VoteAndReviews   lee las reseñas una vez para las dos partes
-                       ├─ VoteForm    VoteForm.tsx, votes.ts
-                       └─ Reviews     withOwnVote() en movie.ts: "(vos)" y "Enviada"
+                  ├─ VoteAndReviews   lee las reseñas una vez para las dos partes
+                  │    ├─ VoteForm    VoteForm.tsx, votes.ts
+                  │    └─ Reviews     withOwnVote() en movie.ts: "(vos)" y "Enviada"
+                  └─ Similar       películas similares (PR #9); usa el mismo estado
 ```
 
 El usuario y el estado son de toda la app, no del formulario: de ellos dependen también las recomendaciones.
@@ -34,6 +35,7 @@ El usuario y el estado son de toda la app, no del formulario: de ellos dependen 
 
 Detalles que salieron al implementar:
 
+- **Un solo estado para toda la app.** Las películas similares (PR #9) habían agregado, en paralelo, un contexto con `recheck()` de la misma forma (`useSystemStatus()` → `{ result, recheck }`). Al mergear quedó una sola implementación, `status.tsx`, que suma el `isReady()` de las similares. Así, un 409 en las similares deshabilita también el formulario, y al revés (comprobado tras el merge).
 - **La reseña propia se reconoce por `userId`,** que se agregó a `GET /movies/{id}/reviews`: en 136 casos, una película tiene dos o más reseñas activas con el mismo nombre.
 - **El formulario espera a las reseñas** ("Cargando tu voto…"). Si no, arrancaría vacío y el voto anterior llegaría con lo escrito ya cambiado.
 - **El foco del selector se pone a mano:** React no deja el atributo `autofocus` en el HTML, y `showModal()` lo llevaría al primer botón.

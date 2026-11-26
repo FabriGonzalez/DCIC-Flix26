@@ -14,7 +14,7 @@ docker compose up --build
 
 No requiere pasos manuales: la carga del dataset, la declaración de colas, la limpieza y el entrenamiento inicial se coordinan entre los contenedores.
 
-La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora tiene el catálogo con búsqueda por título, la ficha de cada película con sus reseñas, la elección de usuario (arriba a la derecha) y el voto con reseña desde la ficha. Arriba se avisa mientras se limpian los datos o se preparan las recomendaciones; en ese rato el catálogo se puede recorrer, pero todavía no se puede votar.
+La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el catálogo con búsqueda por título (`/api/movies`), la ficha de cada película con sus reseñas (`/api/movies/{id}` y `/api/movies/{id}/reviews`) y, cuando las recomendaciones están listas, sus películas similares (`/api/movies/{id}/similar`). Arriba a la derecha se elige el usuario (`/api/users`), y desde la ficha se vota con reseña (`POST /api/movies/{id}/reviews`). Arriba, un aviso mientras se limpian los datos o se preparan las recomendaciones (`/api/status`); en ese rato el catálogo se puede recorrer, pero todavía no se puede votar.
 
 - **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
 - **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
@@ -161,7 +161,7 @@ Que el recomendador esté listo sale del campo `ready` de su `/health`, no del c
 
 Un 503 del `recommender` (perdió Mongo o RabbitMQ) cuenta como no listo, aunque conserve el índice en memoria. Como los dos chequean cada 10 s por separado, después de una caída breve el estado puede quedar en `indexing` entre 10 y 20 s más. Es a propósito: se prefiere informar que no está listo de más y no de menos.
 
-Si el `recommender` se cae después de `ready`, el estado vuelve a `indexing`, pero el `frontend` ya no consulta. El `backend` igual rechaza votos y recomendaciones; cuando una de esas acciones falla por el estado (409), el `frontend` vuelve a consultar `/status` hasta recuperar `ready`. El estado se consulta en un solo lugar (`StatusProvider`) y lo leen el aviso y el formulario de voto.
+Si el `recommender` se cae después de `ready`, el estado vuelve a `indexing`, pero el `frontend` ya no consulta. El `backend` igual rechaza votos y recomendaciones; cuando una de esas acciones falla por el estado (409), el `frontend` vuelve a consultar `/status` hasta recuperar `ready`. El estado se consulta en un solo lugar (`StatusProvider`) y lo leen el aviso, el formulario de voto y las películas similares.
 
 ### Catálogo
 
@@ -303,6 +303,8 @@ Por qué se comprueba antes y qué se delega está en [docs/ingest-consumer.md](
 Ninguna petición reentrena el modelo ni calcula similitudes contra todo el catálogo.
 
 El `recommender` expone `GET /users/{user_id}/recommendations`, `GET /movies/{movie_id}/similar`, `GET /rankings` y `GET /genres`, todos solo en `internal-net`. Mientras no termina de indexar responden 503. El detalle está en [docs/recomendador.md](docs/recomendador.md), sección 9.4.
+
+El `backend` expone las similares de una película en `GET /movies/{id}/similar` (12, con la misma tarjeta que el catálogo). Igual que los votos, responde `409` si el estado no es `ready` y `503` si el `recommender` no responde; en los dos casos el `frontend` vuelve a consultar `/status`.
 
 ## Limpieza de datos
 

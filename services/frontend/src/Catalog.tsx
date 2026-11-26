@@ -120,7 +120,7 @@ function Results({
   );
 }
 
-function Card({ movie }: { movie: MovieCard }) {
+export function Card({ movie }: { movie: MovieCard }) {
   const title = movie.title ?? "Sin título";
   // Lo que no se sabe (null) no se muestra; si no queda nada, no hay línea.
   const details = [movie.year, movie.imdbRating !== null && `★ ${ratingFormat.format(movie.imdbRating)}`]
