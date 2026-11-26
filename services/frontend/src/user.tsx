@@ -9,7 +9,12 @@ import type { User } from "./users";
 
 export interface ChosenUser {
   user: User | null; // null: todavía no eligió
-  choose: (user: User | null) => void;
+  choose: (user: User | null) => void; // también cierra el selector
+  // El selector del encabezado. Acá y no en UserPicker: lo abre también quien necesita un
+  // usuario, como el formulario de voto.
+  pickerOpen: boolean;
+  openPicker: () => void;
+  closePicker: () => void;
 }
 
 const STORAGE_KEY = "dcicflix.user";
@@ -54,11 +59,18 @@ export function UserProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
+  const [pickerOpen, setPickerOpen] = useState(false);
   const choose = useCallback((next: User | null) => {
     store(next);
     setUser(next);
+    setPickerOpen(false);
   }, []);
-  const value = useMemo(() => ({ user, choose }), [user, choose]);
+  const openPicker = useCallback(() => setPickerOpen(true), []);
+  const closePicker = useCallback(() => setPickerOpen(false), []);
+  const value = useMemo(
+    () => ({ user, choose, pickerOpen, openPicker, closePicker }),
+    [user, choose, pickerOpen, openPicker, closePicker],
+  );
   return <UserContext value={value}>{children}</UserContext>;
 }
 

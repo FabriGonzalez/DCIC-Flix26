@@ -384,3 +384,131 @@ a.movie:focus-visible h2 {
 .stale {
   opacity: 0.55;
 }
+
+/* Oculto a la vista, pero lo lee un lector de pantalla. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.vote-section {
+  margin-top: 2.5rem;
+}
+
+.vote-section h3 {
+  margin: 0 0 0.5rem;
+}
+
+.vote {
+  max-width: 36rem;
+  padding: 0.9rem 1rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+}
+
+.vote-fields {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.vote-fields:disabled {
+  opacity: 0.55;
+}
+
+.vote-blocked {
+  margin: 0 0 0.75rem;
+  padding-left: 0.6rem;
+  border-left: 0.25rem solid var(--down);
+  color: var(--muted);
+}
+
+/* Las estrellas son radios: el radio queda invisible pero enfocable, y se ve la estrella. */
+.stars-input {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  align-items: center;
+}
+
+.stars-input legend {
+  float: left;
+  margin-right: 0.6rem;
+  color: var(--muted);
+}
+
+.stars-input label {
+  position: relative;
+  cursor: pointer;
+  font-size: 1.6rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+  color: var(--border);
+}
+
+.stars-input label.on {
+  color: var(--down);
+}
+
+.stars-input input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.stars-input input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 0.2rem;
+}
+
+.stars-input:disabled label {
+  cursor: default;
+}
+
+.vote-comment {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.vote-comment textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  resize: vertical;
+}
+
+.vote-count {
+  margin: -0.4rem 0 0;
+  font-size: 0.85rem;
+}
+
+.vote-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.vote-outcome {
+  margin: 0.75rem 0 0;
+  padding-left: 0.6rem;
+  border-left: 0.25rem solid var(--accent);
+}
+
+.vote-outcome.error {
+  border-left-color: var(--error);
+}

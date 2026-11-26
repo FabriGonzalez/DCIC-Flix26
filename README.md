@@ -161,7 +161,7 @@ Que el recomendador esté listo sale del campo `ready` de su `/health`, no del c
 
 Un 503 del `recommender` (perdió Mongo o RabbitMQ) cuenta como no listo, aunque conserve el índice en memoria. Como los dos chequean cada 10 s por separado, después de una caída breve el estado puede quedar en `indexing` entre 10 y 20 s más. Es a propósito: se prefiere informar que no está listo de más y no de menos.
 
-Si el `recommender` se cae después de `ready`, el estado vuelve a `indexing`, pero el `frontend` ya no consulta. El `backend` igual rechaza votos y recomendaciones; cuando una de esas acciones falla por el estado, el `frontend` vuelve a consultar `/status` hasta recuperar `ready` (se implementa con esas funciones).
+Si el `recommender` se cae después de `ready`, el estado vuelve a `indexing`, pero el `frontend` ya no consulta. El `backend` igual rechaza votos y recomendaciones; cuando una de esas acciones falla por el estado (409), el `frontend` vuelve a consultar `/status` hasta recuperar `ready`. El estado se consulta en un solo lugar (`StatusProvider`) y lo leen el aviso y el formulario de voto.
 
 ### Catálogo
 
@@ -266,6 +266,13 @@ RabbitMQ puede entregar el mismo voto más de una vez, por ejemplo si el consume
 
 La reseña no aparece al instante en la ficha: el `frontend` la muestra como enviada hasta la próxima lectura.
 
+En la ficha, "Tu voto" vota en nombre del usuario elegido en el encabezado (sección "Usuarios"):
+
+- **Sin usuario,** invita a elegir uno y abre el selector.
+- **Mientras el estado no es `ready`,** el formulario se ve deshabilitado, con el motivo (limpieza, recomendaciones o estado desconocido), y se habilita solo al llegar a `ready`.
+- **Estrellas:** cinco radios, que funcionan con el teclado (flechas) y con lectores de pantalla. El comentario tiene el mismo tope que el `backend`, 5.000 caracteres.
+- **Ante un error,** lo escrito se conserva. Con 503 o sin respuesta (8 s), el botón ofrece reintentar.
+
 `POST /movies/{id}/reviews` (en el `frontend`, `/api/movies/{id}/reviews`), con `{"userId", "rating", "comment"}` (`comment` es opcional):
 
 | Código | Cuándo | Qué hace el `frontend` |
@@ -313,7 +320,7 @@ Decisiones abiertas:
 
 Para el `frontend`:
 
-- **Formulario de voto.** Las API están (secciones "Ficha" y "Voto con reseña"), y el usuario ya se elige ("Usuarios").
+- **Reseña propia en la ficha:** marcarla y precargar el formulario con el voto anterior.
 
 Secciones a completar con la implementación:
 

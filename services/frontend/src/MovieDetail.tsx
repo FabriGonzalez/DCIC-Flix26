@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { NotFound } from "./NotFound";
 import { fetchMovie, fetchReviews, type MovieDetail, type MovieResult, type Review, type ReviewsResult } from "./movie";
 import { Poster } from "./Poster";
+import { VoteForm } from "./VoteForm";
 
 const ratingFormat = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const countFormat = new Intl.NumberFormat("es-AR");
@@ -125,7 +126,8 @@ function Detail({ movie }: { movie: MovieDetail }) {
           </dl>
         </div>
       </div>
-      {/* Con el id de la respuesta: si era una copia fusionada, las reseñas están en la ganadora. */}
+      {/* Con el id de la respuesta: si era una copia fusionada, las reseñas y los votos van a la ganadora. */}
+      <VoteForm movieId={movie.id} />
       <Reviews movieId={movie.id} />
     </article>
   );

@@ -8,13 +8,12 @@ const SEARCH_DELAY_MS = 300;
 
 const countFormat = new Intl.NumberFormat("es-AR");
 
-/** Botón del encabezado: muestra el usuario elegido y abre la lista para cambiarlo. */
+/** Botón del encabezado: muestra el usuario elegido y abre la lista para cambiarlo (también desde otras pantallas, con openPicker). */
 export function UserPicker() {
-  const { user, choose } = useUser();
-  const [open, setOpen] = useState(false);
+  const { user, choose, pickerOpen, openPicker, closePicker } = useUser();
   return (
     <>
-      <button className="user-button" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+      <button className="user-button" aria-haspopup="dialog" onClick={openPicker}>
         {user ? (
           <>
             {user.name} <span className="muted">· {user.id}</span>
@@ -24,16 +23,7 @@ export function UserPicker() {
         )}
       </button>
       {/* Montado solo mientras está abierto: cada vez arranca con la búsqueda vacía. */}
-      {open && (
-        <UserDialog
-          current={user}
-          onChoose={(next) => {
-            choose(next);
-            setOpen(false);
-          }}
-          onClose={() => setOpen(false)}
-        />
-      )}
+      {pickerOpen && <UserDialog current={user} onChoose={choose} onClose={closePicker} />}
     </>
   );
 }
