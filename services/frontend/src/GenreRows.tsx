@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-import { Card } from "./Card";
+import { genreLabel } from "./genres";
+import { MovieRow } from "./MovieRow";
 import { fetchRankings, type RankingsResult } from "./rankings";
 import { isReady, useSystemStatus } from "./status";
 
@@ -8,10 +9,15 @@ import { isReady, useSystemStatus } from "./status";
  * Lo mejor de cada género, arriba del catálogo. Solo en "ready": mientras se limpia o se
  * indexa no hay rankings, y el catálogo de abajo alcanza (consigna, punto 3).
  */
+// Las primeras filas entran en una o dos pantallas; con las 22 juntas, el catálogo de abajo
+// quedaba a varios miles de píxeles de scroll.
+const FIRST_ROWS = 6;
+
 export function GenreRows() {
   const { result: status, recheck } = useSystemStatus();
   const ready = isReady(status);
   const [attempt, setAttempt] = useState(0);
+  const [showAll, setShowAll] = useState(false);
   const [result, setResult] = useState<RankingsResult>({ kind: "loading" });
 
   useEffect(() => {
@@ -38,20 +44,26 @@ export function GenreRows() {
       </p>
     );
   }
+  const { rows } = result.data;
+  const shown = showAll ? rows : rows.slice(0, FIRST_ROWS);
   return (
     <div className="genre-rows">
-      {result.data.rows.map((row) => (
-        <section key={row.genre} className="genre-row">
-          <h2>{row.genre}</h2>
-          <ul className="row-scroll">
-            {row.items.map((movie) => (
-              <li key={movie.id}>
-                <Card movie={movie} />
-              </li>
-            ))}
-          </ul>
-        </section>
+      {shown.map((row) => (
+        <MovieRow
+          key={row.genre}
+          title={
+            <>
+              Lo mejor en <span className="accent">{genreLabel(row.genre)}</span>
+            </>
+          }
+          movies={row.items}
+        />
       ))}
+      {rows.length > FIRST_ROWS && (
+        <button className="more" onClick={() => setShowAll((all) => !all)}>
+          {showAll ? "Ver menos géneros" : `Ver ${rows.length - FIRST_ROWS} géneros más`}
+        </button>
+      )}
     </div>
   );
 }

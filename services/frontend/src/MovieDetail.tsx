@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
-import { Card } from "./Card";
+import { genreLabel } from "./genres";
+import { MovieRow } from "./MovieRow";
 import { NotFound } from "./NotFound";
 import { fetchMovie, fetchReviews, type MovieDetail, type MovieResult, type Review, type ReviewsResult } from "./movie";
 import { Poster } from "./Poster";
@@ -70,7 +71,7 @@ function BackLink() {
         }
       }}
     >
-      ← Volver al catálogo
+      ← Volver
     </Link>
   );
 }
@@ -92,15 +93,23 @@ function Detail({ movie }: { movie: MovieDetail }) {
   ];
   return (
     <article className="detail">
+      {/* El póster, ampliado y difuminado, de fondo: le da a cada ficha el color de su película. */}
+      {movie.poster && <div className="detail-backdrop" style={{ backgroundImage: `url("${movie.poster}")` }} aria-hidden="true" />}
       <BackLink />
       <div className="detail-main">
         <div className="detail-poster">
           <Poster url={movie.poster} title={title} />
         </div>
         <div>
-          <h2>{title}</h2>
+          <h1 className="detail-title">{title}</h1>
           {facts && <p className="muted">{facts}</p>}
-          {movie.genres.length > 0 && <p className="muted">{movie.genres.join(", ")}</p>}
+          {movie.genres.length > 0 && (
+            <ul className="chips">
+              {movie.genres.map((genre) => (
+                <li key={genre}>{genreLabel(genre)}</li>
+              ))}
+            </ul>
+          )}
           {movie.imdbRating !== null && (
             <p>
               <strong>★ {ratingFormat.format(movie.imdbRating)}</strong>
@@ -129,14 +138,18 @@ function Detail({ movie }: { movie: MovieDetail }) {
         </div>
       </div>
       {/* Con el id de la respuesta: si era una copia fusionada, las reseñas están en la ganadora. */}
-      <Reviews movieId={movie.id} />
       <Similar movieId={movie.id} />
+      <Reviews movieId={movie.id} />
     </article>
   );
 }
 
+// Las reseñas que se ven de entrada; el resto, con "Ver todas". 16 tarjetas seguidas tapaban la ficha.
+const FIRST_REVIEWS = 6;
+
 function Reviews({ movieId }: { movieId: string }) {
   const [attempt, setAttempt] = useState(0);
+  const [showAll, setShowAll] = useState(false);
   const [result, setResult] = useState<ReviewsResult>({ kind: "loading" });
 
   useEffect(() => {
@@ -147,6 +160,8 @@ function Reviews({ movieId }: { movieId: string }) {
     });
     return () => controller.abort();
   }, [movieId, attempt]);
+
+  useEffect(() => setShowAll(false), [movieId]);
 
   let body;
   if (result.kind === "loading") {
@@ -169,18 +184,23 @@ function Reviews({ movieId }: { movieId: string }) {
           {items.length < total && ` · se muestran las ${items.length} más recientes`}
         </p>
         <ul className="reviews">
-          {items.map((review) => (
+          {(showAll ? items : items.slice(0, FIRST_REVIEWS)).map((review) => (
             <li key={review.id}>
               <ReviewItem review={review} />
             </li>
           ))}
         </ul>
+        {items.length > FIRST_REVIEWS && (
+          <button className="more" onClick={() => setShowAll((all) => !all)}>
+            {showAll ? "Ver menos reseñas" : `Ver las ${items.length} reseñas`}
+          </button>
+        )}
       </>
     );
   }
   return (
-    <section className="reviews-section">
-      <h3>Reseñas</h3>
+    <section className="detail-section">
+      <h2 className="row-title">Reseñas</h2>
       {body}
     </section>
   );
@@ -207,36 +227,32 @@ function Similar({ movieId }: { movieId: string }) {
     return () => controller.abort();
   }, [movieId, attempt, ready, recheck]);
 
-  let body;
-  if (!ready) {
-    body = <p className="muted">Disponibles cuando terminen de prepararse las recomendaciones.</p>;
-  } else if (result.kind === "loading") {
-    body = <p className="muted">Cargando películas similares…</p>;
-  } else if (result.kind === "failed") {
-    body = (
-      <p className="muted">
-        No pudimos cargar las películas similares ({result.reason}) ·{" "}
-        <button className="link" onClick={() => setAttempt((n) => n + 1)}>Reintentar</button>
-      </p>
-    );
-  } else if (result.data.items.length === 0) {
-    body = <p className="muted">No encontramos películas similares.</p>;
-  } else {
-    body = (
-      <ul className="grid">
-        {result.data.items.map((movie) => (
-          <li key={movie.id}>
-            <Card movie={movie} />
-          </li>
-        ))}
-      </ul>
+  const title = "Películas similares";
+  if (!ready || result.kind !== "loaded") {
+    let message;
+    if (!ready) message = "Disponibles cuando terminen de prepararse las recomendaciones.";
+    else if (result.kind === "failed")
+      message = (
+        <>
+          No pudimos cargar las películas similares ({result.reason}) ·{" "}
+          <button className="link" onClick={() => setAttempt((n) => n + 1)}>Reintentar</button>
+        </>
+      );
+    else message = "Cargando películas similares…";
+    return (
+      <section className="detail-section">
+        <h2 className="row-title">{title}</h2>
+        <p className="muted">{message}</p>
+      </section>
     );
   }
+  if (result.data.items.length === 0) {
+    return null; // nada que mostrar: una sección vacía solo ocupa lugar
+  }
   return (
-    <section className="similar-section">
-      <h3>Películas similares</h3>
-      {body}
-    </section>
+    <div className="detail-section">
+      <MovieRow title={title} movies={result.data.items} />
+    </div>
   );
 }
 

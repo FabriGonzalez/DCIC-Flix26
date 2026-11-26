@@ -15,7 +15,7 @@ export function Card({ movie }: { movie: MovieCard }) {
   return (
     <Link className="movie" to={`/movies/${movie.id}`}>
       <Poster url={movie.poster} title={title} />
-      <h2>{title}</h2>
+      <h3>{title}</h3>
       {details && <p className="muted">{details}</p>}
     </Link>
   );

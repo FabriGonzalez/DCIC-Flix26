@@ -3,6 +3,7 @@ import { Link, Route, Routes } from "react-router";
 import { Catalog } from "./Catalog";
 import { MovieDetailPage } from "./MovieDetail";
 import { NotFound } from "./NotFound";
+import { SearchBox } from "./SearchBox";
 import { StatusContext, useStatusPolling, useSystemStatus, type SystemState } from "./status";
 
 export function App() {
@@ -15,22 +16,27 @@ export function App() {
 
 function Layout() {
   return (
-    <main className="page">
-      <header>
-        <h1>
-          <Link className="home" to="/">
-            DCIC-Flix
+    <>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <Link className="brand" to="/" aria-label="DCIC-Flix, ir al inicio">
+            DCIC<span>Flix</span>
           </Link>
-        </h1>
+          <SearchBox />
+          {/* Lugar del menú de usuario (selector, arriba a la derecha). */}
+          <div className="topbar-user" />
+        </div>
       </header>
-      {/* Fuera de Routes: el aviso se ve en todas las pantallas y no se reinicia al navegar. */}
-      <StatusBanner />
-      <Routes>
-        <Route path="/" element={<Catalog />} />
-        <Route path="/movies/:id" element={<MovieDetailPage />} />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </main>
+      <main className="page">
+        {/* Fuera de Routes: el aviso se ve en todas las pantallas y no se reinicia al navegar. */}
+        <StatusBanner />
+        <Routes>
+          <Route path="/" element={<Catalog />} />
+          <Route path="/movies/:id" element={<MovieDetailPage />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </main>
+    </>
   );
 }
 
