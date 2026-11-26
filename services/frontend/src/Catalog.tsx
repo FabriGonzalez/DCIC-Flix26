@@ -1,13 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 
-import { fetchMovies, type CatalogResult, type MovieCard } from "./movies";
-import { Poster } from "./Poster";
+import { Card } from "./Card";
+import { GenreRows } from "./GenreRows";
+import { fetchMovies, type CatalogResult } from "./movies";
 
-// Espera desde la última tecla antes de buscar: así no sale un pedido por cada letra.
-const SEARCH_DELAY_MS = 300;
-
-const ratingFormat = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const countFormat = new Intl.NumberFormat("es-AR");
 
 function parsePage(value: string | null): number {
@@ -17,26 +14,14 @@ function parsePage(value: string | null): number {
 
 export function Catalog() {
   // La búsqueda y la página viven en la URL (/?q=…&page=3): al volver de una ficha con
-  // "atrás", el catálogo queda donde estaba, y el link se puede compartir.
+  // "atrás", el catálogo queda donde estaba, y el link se puede compartir. El cuadro de
+  // búsqueda está en la barra superior (SearchBox).
   const [params, setParams] = useSearchParams();
   const query = params.get("q") ?? "";
   const page = parsePage(params.get("page"));
 
-  const [text, setText] = useState(query);
   const [attempt, setAttempt] = useState(0); // "Reintentar" lo incrementa para repetir el pedido
   const [result, setResult] = useState<CatalogResult>({ kind: "loading" });
-
-  // Si la URL cambia desde afuera (atrás/adelante), el cuadro de búsqueda la acompaña.
-  useEffect(() => setText(query), [query]);
-
-  useEffect(() => {
-    if (text === query) return; // sin esto, al entrar con ?page=3 se volvería a la página 1
-    const timer = setTimeout(() => {
-      // replace: cada búsqueda no deja una entrada en el historial; las páginas sí.
-      setParams(text ? { q: text } : {}, { replace: true });
-    }, SEARCH_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [text, query, setParams]);
 
   useEffect(() => {
     // Si cambian la búsqueda o la página antes de que vuelva el pedido, se cancela: si no,
@@ -49,18 +34,16 @@ export function Catalog() {
     return () => controller.abort();
   }, [query, page, attempt]);
 
-  const goToPage = (next: number) => setParams(query ? { q: query, page: String(next) } : { page: String(next) });
+  const goToPage = (next: number) => {
+    setParams(query ? { q: query, page: String(next) } : { page: String(next) });
+    window.scrollTo({ top: 0 }); // los botones están al pie: la página nueva se lee desde arriba
+  };
 
   return (
     <section className="catalog">
-      <input
-        className="search"
-        type="search"
-        placeholder="Buscar por título"
-        aria-label="Buscar por título"
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-      />
+      {/* Las filas solo en el catálogo "de entrada": al buscar o cambiar de página, estorban. */}
+      {!query && page === 1 && <GenreRows />}
+      <h2 className="section-title">{query.trim() ? `Resultados para "${query.trim()}"` : "Todo el catálogo"}</h2>
       <Results result={result} query={query} onRetry={() => setAttempt((n) => n + 1)} onPage={goToPage} />
     </section>
   );
@@ -105,32 +88,19 @@ function Results({
           </li>
         ))}
       </ul>
-      <nav className="pager" aria-label="Páginas">
-        <button disabled={page <= 1} onClick={() => onPage(page - 1)}>
-          Anterior
-        </button>
-        <span>
-          Página {page} de {pages}
-        </span>
-        <button disabled={page >= pages} onClick={() => onPage(page + 1)}>
-          Siguiente
-        </button>
-      </nav>
+      {pages > 1 && (
+        <nav className="pager" aria-label="Páginas">
+          <button disabled={page <= 1} onClick={() => onPage(page - 1)}>
+            Anterior
+          </button>
+          <span>
+            Página {page} de {pages}
+          </span>
+          <button disabled={page >= pages} onClick={() => onPage(page + 1)}>
+            Siguiente
+          </button>
+        </nav>
+      )}
     </>
-  );
-}
-
-function Card({ movie }: { movie: MovieCard }) {
-  const title = movie.title ?? "Sin título";
-  // Lo que no se sabe (null) no se muestra; si no queda nada, no hay línea.
-  const details = [movie.year, movie.imdbRating !== null && `★ ${ratingFormat.format(movie.imdbRating)}`]
-    .filter(Boolean)
-    .join(" · ");
-  return (
-    <Link className="movie" to={`/movies/${movie.id}`}>
-      <Poster url={movie.poster} title={title} />
-      <h2>{title}</h2>
-      {details && <p className="muted">{details}</p>}
-    </Link>
   );
 }

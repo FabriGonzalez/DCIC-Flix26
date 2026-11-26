@@ -6,6 +6,7 @@ export function Poster({ url, title }: { url: string | null; title: string }) {
   if (!url || broken) {
     return (
       <div className="poster placeholder" aria-hidden="true">
+        <span className="placeholder-icon">🎬</span>
         <span>{title}</span>
       </div>
     );

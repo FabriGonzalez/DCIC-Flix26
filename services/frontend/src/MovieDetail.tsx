@@ -1,9 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
+import { genreLabel } from "./genres";
+import { ChevronIcon } from "./icons";
+import { MovieRow } from "./MovieRow";
 import { NotFound } from "./NotFound";
 import { fetchMovie, fetchReviews, type MovieDetail, type MovieResult, type Review, type ReviewsResult } from "./movie";
 import { Poster } from "./Poster";
+import { fetchSimilar, type SimilarResult } from "./similar";
+import { isReady, useSystemStatus } from "./status";
 
 const ratingFormat = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const countFormat = new Intl.NumberFormat("es-AR");
@@ -67,7 +72,8 @@ function BackLink() {
         }
       }}
     >
-      ← Volver al catálogo
+      <ChevronIcon direction="left" />
+      Volver
     </Link>
   );
 }
@@ -89,50 +95,72 @@ function Detail({ movie }: { movie: MovieDetail }) {
   ];
   return (
     <article className="detail">
-      <BackLink />
-      <div className="detail-main">
-        <div className="detail-poster">
-          <Poster url={movie.poster} title={title} />
-        </div>
-        <div>
-          <h2>{title}</h2>
-          {facts && <p className="muted">{facts}</p>}
-          {movie.genres.length > 0 && <p className="muted">{movie.genres.join(", ")}</p>}
-          {movie.imdbRating !== null && (
-            <p>
-              <strong>★ {ratingFormat.format(movie.imdbRating)}</strong>
-              <span className="muted">
-                {" "}en IMDb{movie.imdbVotes !== null && ` · ${countFormat.format(movie.imdbVotes)} votos`}
-              </span>
-            </p>
-          )}
-          <p className="plot">{movie.plot ?? <span className="muted">Sin sinopsis.</span>}</p>
-          <dl className="facts">
-            {people
-              .filter(([, names]) => names.length > 0)
-              .map(([label, names]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>{names.join(", ")}</dd>
-                </div>
-              ))}
-            {movie.awards && (
-              <div>
-                <dt>Premios</dt>
-                <dd>{movie.awards}</dd>
-              </div>
+      <div className="detail-hero">
+        {/* El póster, ampliado y difuminado, de fondo: le da a cada ficha el color de su película.
+            Va en una variable de CSS porque la imagen la pinta un ::before (ver styles.css). */}
+        {movie.poster && (
+          <div
+            className="detail-backdrop"
+            style={{ "--backdrop": `url("${movie.poster}")` } as CSSProperties}
+            aria-hidden="true"
+          />
+        )}
+        <BackLink />
+        <div className="detail-main">
+          <div className="detail-poster">
+            <Poster url={movie.poster} title={title} />
+          </div>
+          <div>
+            <h1 className="detail-title">{title}</h1>
+            {facts && <p className="muted">{facts}</p>}
+            {movie.genres.length > 0 && (
+              <ul className="chips">
+                {movie.genres.map((genre) => (
+                  <li key={genre}>{genreLabel(genre)}</li>
+                ))}
+              </ul>
             )}
-          </dl>
+            {movie.imdbRating !== null && (
+              <p>
+                <strong>★ {ratingFormat.format(movie.imdbRating)}</strong>
+                <span className="muted">
+                  {" "}en IMDb{movie.imdbVotes !== null && ` · ${countFormat.format(movie.imdbVotes)} votos`}
+                </span>
+              </p>
+            )}
+            <p className="plot">{movie.plot ?? <span className="muted">Sin sinopsis.</span>}</p>
+            <dl className="facts">
+              {people
+                .filter(([, names]) => names.length > 0)
+                .map(([label, names]) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd>{names.join(", ")}</dd>
+                  </div>
+                ))}
+              {movie.awards && (
+                <div>
+                  <dt>Premios</dt>
+                  <dd>{movie.awards}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
         </div>
+        {/* Con el id de la respuesta: si era una copia fusionada, las reseñas están en la ganadora. */}
       </div>
-      {/* Con el id de la respuesta: si era una copia fusionada, las reseñas están en la ganadora. */}
+      <Similar movieId={movie.id} />
       <Reviews movieId={movie.id} />
     </article>
   );
 }
 
+// Las reseñas que se ven de entrada; el resto, con "Ver todas". 16 tarjetas seguidas tapaban la ficha.
+const FIRST_REVIEWS = 6;
+
 function Reviews({ movieId }: { movieId: string }) {
   const [attempt, setAttempt] = useState(0);
+  const [showAll, setShowAll] = useState(false);
   const [result, setResult] = useState<ReviewsResult>({ kind: "loading" });
 
   useEffect(() => {
@@ -143,6 +171,8 @@ function Reviews({ movieId }: { movieId: string }) {
     });
     return () => controller.abort();
   }, [movieId, attempt]);
+
+  useEffect(() => setShowAll(false), [movieId]);
 
   let body;
   if (result.kind === "loading") {
@@ -165,20 +195,75 @@ function Reviews({ movieId }: { movieId: string }) {
           {items.length < total && ` · se muestran las ${items.length} más recientes`}
         </p>
         <ul className="reviews">
-          {items.map((review) => (
+          {(showAll ? items : items.slice(0, FIRST_REVIEWS)).map((review) => (
             <li key={review.id}>
               <ReviewItem review={review} />
             </li>
           ))}
         </ul>
+        {items.length > FIRST_REVIEWS && (
+          <button className="more" onClick={() => setShowAll((all) => !all)}>
+            {showAll ? "Ver menos reseñas" : `Ver las ${items.length} reseñas`}
+          </button>
+        )}
       </>
     );
   }
   return (
-    <section className="reviews-section">
-      <h3>Reseñas</h3>
+    <section className="detail-section">
+      <h2 className="row-title">Reseñas</h2>
       {body}
     </section>
+  );
+}
+
+/** Solo en "ready": mientras se limpia o indexa, las recomendaciones quedan en espera (consigna, punto 3). */
+function Similar({ movieId }: { movieId: string }) {
+  const { result: status, recheck } = useSystemStatus();
+  const ready = isReady(status);
+  const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState<SimilarResult>({ kind: "loading" });
+
+  useEffect(() => {
+    if (!ready) return;
+    const controller = new AbortController();
+    setResult({ kind: "loading" });
+    fetchSimilar(movieId, controller.signal).then((next) => {
+      if (controller.signal.aborted) return;
+      setResult(next);
+      // 409: dejó de estar listo después de "ready". 503: el recomendador no responde.
+      // En los dos casos el aviso vuelve a consultar el estado.
+      if (next.kind === "failed" && (next.status === 409 || next.status === 503)) recheck();
+    });
+    return () => controller.abort();
+  }, [movieId, attempt, ready, recheck]);
+
+  const title = "Películas similares";
+  if (!ready || result.kind !== "loaded") {
+    let message;
+    if (!ready) message = "Disponibles cuando terminen de prepararse las recomendaciones.";
+    else if (result.kind === "failed")
+      message = (
+        <>
+          No pudimos cargar las películas similares ({result.reason}) ·{" "}
+          <button className="link" onClick={() => setAttempt((n) => n + 1)}>Reintentar</button>
+        </>
+      );
+    else message = "Cargando películas similares…";
+    return (
+      <section className="detail-section">
+        <h2 className="row-title">{title}</h2>
+        <p className="muted">{message}</p>
+      </section>
+    );
+  }
+  if (result.data.items.length === 0) {
+    return null; // nada que mostrar: una sección vacía solo ocupa lugar
+  }
+  return (
+    <div className="detail-section">
+      <MovieRow title={title} movies={result.data.items} />
+    </div>
   );
 }
 
