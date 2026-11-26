@@ -277,3 +277,110 @@ a.movie:focus-visible h2 {
   color: var(--down);
   letter-spacing: 0.05em;
 }
+
+/* Encabezado: título a la izquierda, usuario a la derecha. */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.user-button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sin padding propio: así un clic en el <dialog> mismo es un clic en el fondo (UserPicker). */
+.user-dialog {
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 4rem);
+  padding: 0;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+.user-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+/* Columna con la altura del diálogo: el título y la búsqueda quedan fijos y se desplaza la lista. */
+.user-dialog-body {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 4rem);
+  box-sizing: border-box;
+  padding: 1.1rem 1.25rem 1.25rem;
+}
+
+.user-results {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.user-dialog-body header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.user-dialog-body h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.user-dialog-body > p {
+  margin: 0.5rem 0 0.9rem;
+  font-size: 0.9rem;
+}
+
+.user-dialog .search {
+  max-width: none;
+}
+
+.user-list {
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0 0.25rem 0 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.user-list button {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+  text-align: left;
+}
+
+.user-list button:hover,
+.user-list button:focus-visible {
+  border-color: var(--accent);
+}
+
+/* El usuario actual: sombra y no un borde más grueso, que correría el texto. */
+.user-list button[aria-current="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tag {
+  font-size: 0.75rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--down);
+  color: var(--down);
+}
+
+/* Resultados de la búsqueda anterior, mientras llega la nueva. */
+.stale {
+  opacity: 0.55;
+}

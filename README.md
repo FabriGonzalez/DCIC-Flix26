@@ -217,6 +217,7 @@ La colección `users` la carga el `backend` cada vez que arranca: `{_id, name, e
 - **No espera a la limpieza:** en el crudo, cada `user_id` tiene un solo nombre y un solo email. Solo se saltean las reseñas anónimas (B4), por id, y las del `ingest-consumer`, que no tienen nombre.
 - **Si Mongo no responde,** reintenta cada 5 s. El resto del `backend` no espera.
 - **Privacidad:** el email sirve para buscar, pero la API no lo devuelve. Los nombres se repiten (432 los comparten varios usuarios): lo que distingue a dos usuarios es el id.
+- **En el `frontend`:** se elige desde el encabezado, en cualquier pantalla, y queda guardado en el navegador (`localStorage`), no en la URL: un link compartido no lleva tu usuario. Lo usan el voto y las recomendaciones.
 
 `GET /users` (en el `frontend`, `/api/users`):
 
@@ -312,7 +313,7 @@ Decisiones abiertas:
 
 Para el `frontend`:
 
-- **Selector de usuario y formulario de voto.** Las API están (secciones "Usuarios", "Ficha" y "Voto con reseña").
+- **Formulario de voto.** Las API están (secciones "Ficha" y "Voto con reseña"), y el usuario ya se elige ("Usuarios").
 
 Secciones a completar con la implementación:
 
