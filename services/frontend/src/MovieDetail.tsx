@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { genreLabel } from "./genres";
+import { ChevronIcon } from "./icons";
 import { MovieRow } from "./MovieRow";
 import { NotFound } from "./NotFound";
 import { fetchMovie, fetchReviews, type MovieDetail, type MovieResult, type Review, type ReviewsResult } from "./movie";
@@ -71,7 +72,8 @@ function BackLink() {
         }
       }}
     >
-      ← Volver
+      <ChevronIcon direction="left" />
+      Volver
     </Link>
   );
 }
@@ -93,51 +95,60 @@ function Detail({ movie }: { movie: MovieDetail }) {
   ];
   return (
     <article className="detail">
-      {/* El póster, ampliado y difuminado, de fondo: le da a cada ficha el color de su película. */}
-      {movie.poster && <div className="detail-backdrop" style={{ backgroundImage: `url("${movie.poster}")` }} aria-hidden="true" />}
-      <BackLink />
-      <div className="detail-main">
-        <div className="detail-poster">
-          <Poster url={movie.poster} title={title} />
-        </div>
-        <div>
-          <h1 className="detail-title">{title}</h1>
-          {facts && <p className="muted">{facts}</p>}
-          {movie.genres.length > 0 && (
-            <ul className="chips">
-              {movie.genres.map((genre) => (
-                <li key={genre}>{genreLabel(genre)}</li>
-              ))}
-            </ul>
-          )}
-          {movie.imdbRating !== null && (
-            <p>
-              <strong>★ {ratingFormat.format(movie.imdbRating)}</strong>
-              <span className="muted">
-                {" "}en IMDb{movie.imdbVotes !== null && ` · ${countFormat.format(movie.imdbVotes)} votos`}
-              </span>
-            </p>
-          )}
-          <p className="plot">{movie.plot ?? <span className="muted">Sin sinopsis.</span>}</p>
-          <dl className="facts">
-            {people
-              .filter(([, names]) => names.length > 0)
-              .map(([label, names]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>{names.join(", ")}</dd>
-                </div>
-              ))}
-            {movie.awards && (
-              <div>
-                <dt>Premios</dt>
-                <dd>{movie.awards}</dd>
-              </div>
+      <div className="detail-hero">
+        {/* El póster, ampliado y difuminado, de fondo: le da a cada ficha el color de su película.
+            Va en una variable de CSS porque la imagen la pinta un ::before (ver styles.css). */}
+        {movie.poster && (
+          <div
+            className="detail-backdrop"
+            style={{ "--backdrop": `url("${movie.poster}")` } as CSSProperties}
+            aria-hidden="true"
+          />
+        )}
+        <BackLink />
+        <div className="detail-main">
+          <div className="detail-poster">
+            <Poster url={movie.poster} title={title} />
+          </div>
+          <div>
+            <h1 className="detail-title">{title}</h1>
+            {facts && <p className="muted">{facts}</p>}
+            {movie.genres.length > 0 && (
+              <ul className="chips">
+                {movie.genres.map((genre) => (
+                  <li key={genre}>{genreLabel(genre)}</li>
+                ))}
+              </ul>
             )}
-          </dl>
+            {movie.imdbRating !== null && (
+              <p>
+                <strong>★ {ratingFormat.format(movie.imdbRating)}</strong>
+                <span className="muted">
+                  {" "}en IMDb{movie.imdbVotes !== null && ` · ${countFormat.format(movie.imdbVotes)} votos`}
+                </span>
+              </p>
+            )}
+            <p className="plot">{movie.plot ?? <span className="muted">Sin sinopsis.</span>}</p>
+            <dl className="facts">
+              {people
+                .filter(([, names]) => names.length > 0)
+                .map(([label, names]) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd>{names.join(", ")}</dd>
+                  </div>
+                ))}
+              {movie.awards && (
+                <div>
+                  <dt>Premios</dt>
+                  <dd>{movie.awards}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
         </div>
+        {/* Con el id de la respuesta: si era una copia fusionada, las reseñas están en la ganadora. */}
       </div>
-      {/* Con el id de la respuesta: si era una copia fusionada, las reseñas están en la ganadora. */}
       <Similar movieId={movie.id} />
       <Reviews movieId={movie.id} />
     </article>

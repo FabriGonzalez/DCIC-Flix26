@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Card } from "./Card";
+import { ChevronIcon } from "./icons";
 import type { MovieCard } from "./movies";
 
 /**
@@ -32,10 +33,10 @@ export function MovieRow({ title, movies }: { title: ReactNode; movies: MovieCar
   return (
     <section className="movie-row">
       <h2 className="row-title">{title}</h2>
-      <div className="row-frame">
+      <div className={`row-frame${edges.start ? "" : " fade-start"}${edges.end ? "" : " fade-end"}`}>
         {!edges.start && (
           <button className="row-arrow prev" aria-label="Anteriores" onClick={() => move(-1)}>
-            ‹
+            <ChevronIcon direction="left" />
           </button>
         )}
         <ul className="row-scroll" ref={scroller} onScroll={updateEdges}>
@@ -47,7 +48,7 @@ export function MovieRow({ title, movies }: { title: ReactNode; movies: MovieCar
         </ul>
         {!edges.end && (
           <button className="row-arrow next" aria-label="Siguientes" onClick={() => move(1)}>
-            ›
+            <ChevronIcon direction="right" />
           </button>
         )}
       </div>
