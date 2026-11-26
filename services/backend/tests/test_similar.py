@@ -4,7 +4,7 @@ import httpx
 import pytest
 from bson import ObjectId
 
-from app import catalog, similar
+from app import catalog, recommender, similar
 
 URL = "http://recommender:8000"
 
@@ -42,7 +42,7 @@ def test_movie_not_active_in_recommender_is_none():
 
 @pytest.mark.parametrize("code", [503, 500])
 def test_recommender_error_is_unavailable(code):
-    with pytest.raises(similar.RecommenderUnavailable):
+    with pytest.raises(recommender.RecommenderUnavailable):
         run_ids(lambda request: httpx.Response(code, json={"detail": "x"}))
 
 
@@ -50,7 +50,7 @@ def test_recommender_down_is_unavailable():
     def handler(request):
         raise httpx.ConnectError("recommender caído")
 
-    with pytest.raises(similar.RecommenderUnavailable):
+    with pytest.raises(recommender.RecommenderUnavailable):
         run_ids(handler)
 
 

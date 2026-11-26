@@ -10,9 +10,11 @@ es trabajo del cleaning-agent: repetir sus reglas acá sería mantenerlas en dos
 para cubrir los segundos que dura la limpieza.
 """
 
+import logging
 import re
 from typing import Any
 
+from bson import ObjectId
 from pymongo import AsyncMongoClient
 
 COLLECTION = "movies"
@@ -21,6 +23,8 @@ PAGE_SIZE = 24  # divisible por 2, 3, 4 y 6: la grilla queda completa en cualqui
 # Las copias duplicadas tienen deleted: true. $ne y no `deleted: false` porque, durante la
 # limpieza, los documentos crudos todavía no tienen el campo.
 ACTIVE = {"deleted": {"$ne": True}}
+
+log = logging.getLogger("backend")
 
 # Solo lo que muestra la tarjeta: no traer plot, cast, tomatoes...
 CARD_FIELDS = {"title": 1, "year": 1, "poster": 1, "genres": 1, "imdb.rating": 1, "imdb.votes": 1}
@@ -92,3 +96,19 @@ async def list_movies(mongo: AsyncMongoClient, query: str, page: int) -> dict:
         "pageSize": PAGE_SIZE,
         "total": total,
     }
+
+
+async def cards_by_id(mongo: AsyncMongoClient, ids: list[str]) -> dict[str, dict]:
+    """Las tarjetas de las películas activas entre esos ids, en una sola consulta.
+
+    Para lo que devuelve el recommender (similares, rankings): su índice se arma con la base
+    ya limpia, así que no debería faltar ninguna. Si falta, se anota y quien llama la saltea:
+    mejor una fila más corta que ninguna. Lanza PyMongoError si Mongo no responde.
+    """
+    wanted = [ObjectId(i) for i in ids if ObjectId.is_valid(i)]
+    cursor = mongo.get_default_database()[COLLECTION].find({"_id": {"$in": wanted}, **ACTIVE}, CARD_FIELDS)
+    found = {str(d["_id"]): to_card(d) for d in await cursor.to_list()}
+    missing = sorted(set(ids) - found.keys())
+    if missing:
+        log.warning("el recommender devolvió películas que no están activas en Mongo: %s", missing)
+    return found

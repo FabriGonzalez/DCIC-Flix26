@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 
-import { fetchMovies, type CatalogResult, type MovieCard } from "./movies";
-import { Poster } from "./Poster";
+import { Card } from "./Card";
+import { GenreRows } from "./GenreRows";
+import { fetchMovies, type CatalogResult } from "./movies";
 
 // Espera desde la última tecla antes de buscar: así no sale un pedido por cada letra.
 const SEARCH_DELAY_MS = 300;
 
-const ratingFormat = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const countFormat = new Intl.NumberFormat("es-AR");
 
 function parsePage(value: string | null): number {
@@ -61,6 +61,8 @@ export function Catalog() {
         value={text}
         onChange={(event) => setText(event.target.value)}
       />
+      {/* Las filas solo en el catálogo "de entrada": al buscar o cambiar de página, estorban. */}
+      {!query && page === 1 && <GenreRows />}
       <Results result={result} query={query} onRetry={() => setAttempt((n) => n + 1)} onPage={goToPage} />
     </section>
   );
@@ -117,20 +119,5 @@ function Results({
         </button>
       </nav>
     </>
-  );
-}
-
-export function Card({ movie }: { movie: MovieCard }) {
-  const title = movie.title ?? "Sin título";
-  // Lo que no se sabe (null) no se muestra; si no queda nada, no hay línea.
-  const details = [movie.year, movie.imdbRating !== null && `★ ${ratingFormat.format(movie.imdbRating)}`]
-    .filter(Boolean)
-    .join(" · ");
-  return (
-    <Link className="movie" to={`/movies/${movie.id}`}>
-      <Poster url={movie.poster} title={title} />
-      <h2>{title}</h2>
-      {details && <p className="muted">{details}</p>}
-    </Link>
   );
 }

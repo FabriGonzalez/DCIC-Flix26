@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
-import { Card } from "./Catalog";
+import { Card } from "./Card";
 import { NotFound } from "./NotFound";
 import { fetchMovie, fetchReviews, type MovieDetail, type MovieResult, type Review, type ReviewsResult } from "./movie";
 import { Poster } from "./Poster";
