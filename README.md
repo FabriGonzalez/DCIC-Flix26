@@ -264,14 +264,16 @@ El detalle y las alternativas descartadas están en [ANOMALIAS.md](analysis/ANOM
 
 RabbitMQ puede entregar el mismo voto más de una vez, por ejemplo si el consumer se cae entre guardar y confirmar. Guardarlo otra vez no cambia nada. Las decisiones y las pruebas de fallas están en [docs/ingest-consumer.md](docs/ingest-consumer.md).
 
-La reseña no aparece al instante en la ficha: el `frontend` la muestra como enviada hasta la próxima lectura.
+La reseña no aparece al instante en la ficha, porque el 202 llega antes de que se guarde. Releer en ese momento podría mostrar el voto anterior, y preguntar hasta que aparezca sumaría pedidos por cada voto. Por eso el `frontend` no relee: muestra lo que aceptó el `backend` como "Enviada", en memoria, hasta que una lectura traiga la reseña con fecha igual o posterior a `votedAt`.
 
 En la ficha, "Tu voto" vota en nombre del usuario elegido en el encabezado (sección "Usuarios"):
 
 - **Sin usuario,** invita a elegir uno y abre el selector.
+- **Voto anterior:** la reseña propia se reconoce por `userId` y se marca "(vos)". El formulario se precarga con ella (o con la enviada, si todavía no se leyó) y el botón dice "Actualizar voto". Cambiar de usuario no vuelve a leer las reseñas.
 - **Mientras el estado no es `ready`,** el formulario se ve deshabilitado, con el motivo (limpieza, recomendaciones o estado desconocido), y se habilita solo al llegar a `ready`.
 - **Estrellas:** cinco radios, que funcionan con el teclado (flechas) y con lectores de pantalla. El comentario tiene el mismo tope que el `backend`, 5.000 caracteres.
 - **Ante un error,** lo escrito se conserva. Con 503 o sin respuesta (8 s), el botón ofrece reintentar.
+- **Límite:** "Enviada" sobrevive a navegar dentro de la app, pero no a recargar. Si se recarga antes de que se guarde (con el `ingest-consumer` detenido, por ejemplo), se ve el voto anterior hasta que se guarda. El voto no se pierde.
 
 `POST /movies/{id}/reviews` (en el `frontend`, `/api/movies/{id}/reviews`), con `{"userId", "rating", "comment"}` (`comment` es opcional):
 
@@ -317,10 +319,6 @@ Decisiones abiertas:
 
 - **LLM:** se asume API externa con API key, a confirmar con la cátedra. Si pasa a ser un modelo local, se agrega un contenedor `ollama` y se elimina `egress-net`.
 - **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
-
-Para el `frontend`:
-
-- **Reseña propia en la ficha:** marcarla y precargar el formulario con el voto anterior.
 
 Secciones a completar con la implementación:
 

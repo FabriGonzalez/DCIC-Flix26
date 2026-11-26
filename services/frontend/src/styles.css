@@ -512,3 +512,13 @@ a.movie:focus-visible h2 {
 .vote-outcome.error {
   border-left-color: var(--error);
 }
+
+/* La reseña del usuario elegido. */
+.review.own {
+  border-color: var(--accent);
+}
+
+.vote-note {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}

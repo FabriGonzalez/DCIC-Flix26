@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent } from "react";
 
+import { usePendingVotes } from "./pending";
 import { useSystemStatus, type StatusResult } from "./status";
 import { useUser } from "./user";
 import type { User } from "./users";
@@ -7,20 +8,45 @@ import { MAX_COMMENT_LENGTH, sendVote, type VoteResult } from "./votes";
 
 const countFormat = new Intl.NumberFormat("es-AR");
 
-/** "Tu voto", en la ficha. Vota en nombre del usuario elegido en el encabezado. */
-export function VoteForm({ movieId }: { movieId: string }) {
+/** El último voto del usuario para la película: precarga el formulario. */
+export interface PreviousVote {
+  rating: number | null; // null: reseña sin puntaje (sin LLM)
+  comment: string; // "" si no tenía o estaba oculto
+}
+
+/**
+ * "Tu voto", en la ficha. Vota en nombre del usuario elegido en el encabezado.
+ * `previous` sale de las reseñas: mientras se leen (`loading`), el formulario espera.
+ */
+export function VoteForm({
+  movieId,
+  previous,
+  loading,
+}: {
+  movieId: string;
+  previous: PreviousVote | null;
+  loading: boolean;
+}) {
   const { user, openPicker } = useUser();
+  let body;
+  if (user === null) {
+    body = (
+      <p className="muted">
+        Para votar, <button className="link" onClick={openPicker}>elegí un usuario</button>.
+      </p>
+    );
+  } else if (loading) {
+    // Si no esperara, arrancaría vacío y el voto anterior llegaría con lo escrito ya cambiado.
+    body = <p className="muted">Cargando tu voto…</p>;
+  } else {
+    // key: con otro usuario u otra película, el formulario arranca de nuevo, con su voto.
+    // `previous` se lee solo al montar: después, lo que se escribe no se pisa.
+    body = <VoteFields key={`${user.id}/${movieId}`} movieId={movieId} user={user} previous={previous} />;
+  }
   return (
     <section className="vote-section">
       <h3>Tu voto</h3>
-      {user === null ? (
-        <p className="muted">
-          Para votar, <button className="link" onClick={openPicker}>elegí un usuario</button>.
-        </p>
-      ) : (
-        // key: con otro usuario u otra película, el formulario arranca de cero.
-        <VoteFields key={`${user.id}/${movieId}`} movieId={movieId} user={user} />
-      )}
+      {body}
     </section>
   );
 }
@@ -34,10 +60,13 @@ function blockedReason(status: StatusResult): string | null {
   return null;
 }
 
-function VoteFields({ movieId, user }: { movieId: string; user: User }) {
+function VoteFields({ movieId, user, previous }: { movieId: string; user: User; previous: PreviousVote | null }) {
   const { result: status, recheck } = useSystemStatus();
-  const [rating, setRating] = useState<number | null>(null);
-  const [comment, setComment] = useState("");
+  const pendingVotes = usePendingVotes();
+  const [rating, setRating] = useState<number | null>(previous?.rating ?? null);
+  const [comment, setComment] = useState(previous?.comment ?? "");
+  // Ya votó (antes, o recién con este formulario): votar de nuevo reemplaza ese voto.
+  const [voted, setVoted] = useState(previous !== null);
   const [sending, setSending] = useState(false);
   const [outcome, setOutcome] = useState<VoteResult | null>(null);
 
@@ -60,6 +89,11 @@ function VoteFields({ movieId, user }: { movieId: string; user: User }) {
       // 409: con "ready" ya no se consultaba el estado. Se vuelve a consultar, y el formulario
       // queda deshabilitado con el motivo hasta que vuelva a estar listo. Lo escrito se conserva.
       if (result.kind === "not-ready") recheck();
+      if (result.kind === "accepted") {
+        // Las reseñas lo muestran como "Enviada" sin volver a leer (S4).
+        pendingVotes.add(result.vote);
+        setVoted(true);
+      }
       setOutcome(result);
     } finally {
       setSending(false);
@@ -73,6 +107,7 @@ function VoteFields({ movieId, user }: { movieId: string; user: User }) {
           {blocked}
         </p>
       )}
+      {voted && <p className="muted vote-note">Ya votaste esta película. Si votás de nuevo, reemplaza tu voto.</p>}
       {/* Un fieldset deshabilitado deshabilita todo lo de adentro, sin perder lo escrito. */}
       <fieldset className="vote-fields" disabled={blocked !== null}>
         <StarInput value={rating} onChange={(n) => edit(() => setRating(n))} />
@@ -94,7 +129,7 @@ function VoteFields({ movieId, user }: { movieId: string; user: User }) {
         )}
         <div className="vote-actions">
           <button type="submit" disabled={sending || rating === null}>
-            {sending ? "Enviando…" : retry ? "Reintentar" : "Enviar voto"}
+            {sending ? "Enviando…" : retry ? "Reintentar" : voted ? "Actualizar voto" : "Enviar voto"}
           </button>
           {rating === null && !blocked && <span className="muted">Elegí de 1 a 5 estrellas.</span>}
         </div>
@@ -109,7 +144,7 @@ function Outcome({ result }: { result: VoteResult }) {
     case "accepted":
       return (
         <p className="vote-outcome ok" role="status">
-          Tu voto se envió. Va a aparecer en las reseñas en unos segundos.
+          Tu voto se envió. En las reseñas figura como "Enviada" hasta la próxima vez que se carguen.
         </p>
       );
     case "not-ready":
