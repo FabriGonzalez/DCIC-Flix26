@@ -3,10 +3,23 @@ import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { Card } from "./Catalog";
 import { NotFound } from "./NotFound";
-import { fetchMovie, fetchReviews, type MovieDetail, type MovieResult, type Review, type ReviewsResult } from "./movie";
+import {
+  fetchMovie,
+  fetchReviews,
+  withOwnVote,
+  type MovieDetail,
+  type MovieResult,
+  type Review,
+  type ReviewsResult,
+  type ReviewsWithOwnVote,
+  type ShownReview,
+} from "./movie";
+import { usePendingVotes } from "./pending";
 import { Poster } from "./Poster";
 import { fetchSimilar, type SimilarResult } from "./similar";
 import { isReady, useSystemStatus } from "./status";
+import { useUser } from "./user";
+import { VoteForm } from "./VoteForm";
 
 const ratingFormat = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const countFormat = new Intl.NumberFormat("es-AR");
@@ -128,14 +141,20 @@ function Detail({ movie }: { movie: MovieDetail }) {
           </dl>
         </div>
       </div>
-      {/* Con el id de la respuesta: si era una copia fusionada, las reseñas están en la ganadora. */}
-      <Reviews movieId={movie.id} />
+      {/* Con el id de la respuesta: si era una copia fusionada, reseñas, votos y similares son los de la ganadora. */}
+      <VoteAndReviews movieId={movie.id} />
       <Similar movieId={movie.id} />
     </article>
   );
 }
 
-function Reviews({ movieId }: { movieId: string }) {
+/**
+ * "Tu voto" y las reseñas. Las reseñas se leen una vez para los dos: de ahí sale el voto
+ * anterior del usuario, que precarga el formulario. Cambiar de usuario no vuelve a leer.
+ */
+function VoteAndReviews({ movieId }: { movieId: string }) {
+  const { user } = useUser();
+  const pendingVotes = usePendingVotes();
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<ReviewsResult>({ kind: "loading" });
 
@@ -148,6 +167,36 @@ function Reviews({ movieId }: { movieId: string }) {
     return () => controller.abort();
   }, [movieId, attempt]);
 
+  const pending = user === null ? null : pendingVotes.get(user.id, movieId);
+  const shown = result.kind === "loaded" ? withOwnVote(result.data, user, pending) : null;
+
+  // Si la lectura ya trae el voto enviado, la marca "Enviada" deja de hacer falta.
+  const pendingSaved = shown?.pendingSaved ?? false;
+  useEffect(() => {
+    if (pending !== null && pendingSaved) pendingVotes.clear(pending);
+  }, [pending, pendingSaved, pendingVotes]);
+
+  // Lo último que votó: lo enviado si todavía no se leyó, si no, lo guardado.
+  const own = shown?.own ?? null;
+  const previous = pending ?? (own && { rating: own.rating, comment: own.comment ?? "" });
+
+  return (
+    <>
+      <VoteForm movieId={movieId} previous={previous} loading={result.kind === "loading"} />
+      <Reviews result={result} shown={shown} onRetry={() => setAttempt((n) => n + 1)} />
+    </>
+  );
+}
+
+function Reviews({
+  result,
+  shown,
+  onRetry,
+}: {
+  result: ReviewsResult;
+  shown: ReviewsWithOwnVote | null;
+  onRetry: () => void;
+}) {
   let body;
   if (result.kind === "loading") {
     body = <p className="muted">Cargando reseñas…</p>;
@@ -155,13 +204,13 @@ function Reviews({ movieId }: { movieId: string }) {
     body = (
       <p className="muted">
         No pudimos cargar las reseñas ({result.reason}) ·{" "}
-        <button className="link" onClick={() => setAttempt((n) => n + 1)}>Reintentar</button>
+        <button className="link" onClick={onRetry}>Reintentar</button>
       </p>
     );
-  } else if (result.data.total === 0) {
+  } else if (shown === null || shown.total === 0) {
     body = <p className="muted">Todavía no hay reseñas.</p>;
   } else {
-    const { items, total } = result.data;
+    const { items, total } = shown;
     body = (
       <>
         <p className="muted">
@@ -247,12 +296,15 @@ function formatDate(review: Review): string | null {
   return review.datePrecision === "year" ? String(date.getUTCFullYear()) : dayFormat.format(date);
 }
 
-function ReviewItem({ review }: { review: Review }) {
+function ReviewItem({ review }: { review: ShownReview }) {
   const date = formatDate(review);
   return (
-    <article className="review">
+    <article className={review.own ? "review own" : "review"}>
       <header>
-        <strong>{review.userName ?? "Usuario sin nombre"}</strong>
+        <strong>
+          {review.userName ?? "Usuario sin nombre"}
+          {review.own && <span className="muted"> (vos)</span>}
+        </strong>
         {review.rating !== null ? (
           <span className="stars" aria-label={`${review.rating} de 5 estrellas`}>
             {"★".repeat(review.rating)}
@@ -261,7 +313,8 @@ function ReviewItem({ review }: { review: Review }) {
         ) : (
           <span className="muted">Sin puntaje</span>
         )}
-        {date && <span className="muted">{date}</span>}
+        {/* Enviada: aceptada, pero todavía no apareció en una lectura (S4). */}
+        {review.sent ? <span className="tag">Enviada</span> : date && <span className="muted">{date}</span>}
       </header>
       {/* Sin comentario (oculto por basura, B7/B8): quedan el nombre, las estrellas y la fecha. */}
       {review.comment && <p>{review.comment}</p>}

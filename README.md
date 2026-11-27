@@ -14,7 +14,7 @@ docker compose up --build
 
 No requiere pasos manuales: la carga del dataset, la declaración de colas, la limpieza y el entrenamiento inicial se coordinan entre los contenedores.
 
-La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el catálogo con búsqueda por título (`/api/movies`), la ficha de cada película con sus reseñas (`/api/movies/{id}` y `/api/movies/{id}/reviews`) y, cuando las recomendaciones están listas, sus películas similares (`/api/movies/{id}/similar`). Arriba, un aviso mientras se limpian los datos o se preparan las recomendaciones (`/api/status`).
+La aplicación queda en **http://localhost:8080** (el puerto se cambia con `FRONTEND_PORT` en `.env`). Por ahora muestra el catálogo con búsqueda por título (`/api/movies`), la ficha de cada película con sus reseñas (`/api/movies/{id}` y `/api/movies/{id}/reviews`) y, cuando las recomendaciones están listas, sus películas similares (`/api/movies/{id}/similar`). Arriba a la derecha se elige el usuario (`/api/users`), y desde la ficha se vota con reseña (`POST /api/movies/{id}/reviews`). Arriba, un aviso mientras se limpian los datos o se preparan las recomendaciones (`/api/status`); en ese rato el catálogo se puede recorrer, pero todavía no se puede votar.
 
 - **`.env` es opcional.** Sin él se usan valores de desarrollo. Para cambiarlos, copiar [.env.example](.env.example) a `.env`. La API key del LLM también es opcional: sin ella, las funciones que usan el LLM quedan deshabilitadas.
 - **`topology-init` en `Exited (0)` es lo esperado:** declara las colas de RabbitMQ y termina.
@@ -161,7 +161,7 @@ Que el recomendador esté listo sale del campo `ready` de su `/health`, no del c
 
 Un 503 del `recommender` (perdió Mongo o RabbitMQ) cuenta como no listo, aunque conserve el índice en memoria. Como los dos chequean cada 10 s por separado, después de una caída breve el estado puede quedar en `indexing` entre 10 y 20 s más. Es a propósito: se prefiere informar que no está listo de más y no de menos.
 
-Si el `recommender` se cae después de `ready`, el estado vuelve a `indexing`, pero el `frontend` ya no consulta. El `backend` igual rechaza votos y recomendaciones; cuando una de esas acciones falla por el estado, el `frontend` vuelve a consultar `/status` hasta recuperar `ready` (se implementa con esas funciones).
+Si el `recommender` se cae después de `ready`, el estado vuelve a `indexing`, pero el `frontend` ya no consulta. El `backend` igual rechaza votos y recomendaciones; cuando una de esas acciones falla por el estado (409), el `frontend` vuelve a consultar `/status` hasta recuperar `ready`. El estado se consulta en un solo lugar (`StatusProvider`) y lo leen el aviso, el formulario de voto y las películas similares.
 
 ### Catálogo
 
@@ -192,6 +192,7 @@ Cada película tiene su página en `/movies/{id}`, con sus datos, la sinopsis y 
 - **Total:** sale del conteo de reseñas activas, no de `num_mflix_comments`, que no cuenta las de comentario oculto.
 - **Nombre:** las reseñas del dataset lo traen. Las que crea el `ingest-consumer` tienen solo `user_id`, y el nombre se busca en `users`: una consulta para todas, y ninguna si no hay de esas.
 - **Privacidad:** la API no devuelve `user_email`.
+- **Reseña propia:** cada reseña trae `userId`, porque los nombres se repiten (hay 136 casos de dos o más reseñas activas de una película con el mismo nombre). Las anónimas (B4) traen `null`.
 
 `GET /movies/{id}` (en el `frontend`, `/api/movies/{id}`):
 
@@ -201,7 +202,7 @@ Cada película tiene su página en `/movies/{id}`, con sus datos, la sinopsis y 
 
 `GET /movies/{id}/reviews` (en el `frontend`, `/api/movies/{id}/reviews`):
 
-- `200 {"items": [{"id", "userName", "rating", "comment", "date", "datePrecision"}], "total"}`. Las activas, de la más reciente a la más vieja; sin fecha válida, al final. Hasta 100 (hoy el máximo es 42 por película); `total` cuenta todas. `date` es ISO en UTC; con `datePrecision: "year"` (las `circa`) se muestra solo el año.
+- `200 {"items": [{"id", "userId", "userName", "rating", "comment", "date", "datePrecision"}], "total"}`. Las activas, de la más reciente a la más vieja; sin fecha válida, al final. Hasta 100 (hoy el máximo es 55 por película); `total` cuenta todas. `date` es ISO en UTC; con `datePrecision: "year"` (las `circa`) se muestra solo el año.
 - No comprueba que la película exista: un id que no es de ninguna da `items` vacío.
 - `404` si el id no es válido; `503` si Mongo no responde.
 
@@ -216,6 +217,7 @@ La colección `users` la carga el `backend` cada vez que arranca: `{_id, name, e
 - **No espera a la limpieza:** en el crudo, cada `user_id` tiene un solo nombre y un solo email. Solo se saltean las reseñas anónimas (B4), por id, y las del `ingest-consumer`, que no tienen nombre.
 - **Si Mongo no responde,** reintenta cada 5 s. El resto del `backend` no espera.
 - **Privacidad:** el email sirve para buscar, pero la API no lo devuelve. Los nombres se repiten (432 los comparten varios usuarios): lo que distingue a dos usuarios es el id.
+- **En el `frontend`:** se elige desde el encabezado, en cualquier pantalla, y queda guardado en el navegador (`localStorage`), no en la URL: un link compartido no lleva tu usuario. Lo usan el voto y las recomendaciones.
 
 `GET /users` (en el `frontend`, `/api/users`):
 
@@ -262,7 +264,18 @@ El detalle y las alternativas descartadas están en [ANOMALIAS.md](analysis/ANOM
 
 RabbitMQ puede entregar el mismo voto más de una vez, por ejemplo si el consumer se cae entre guardar y confirmar. Guardarlo otra vez no cambia nada. Las decisiones y las pruebas de fallas están en [docs/ingest-consumer.md](docs/ingest-consumer.md).
 
-La reseña no aparece al instante en la ficha: el `frontend` la muestra como enviada hasta la próxima lectura.
+La reseña no aparece al instante en la ficha, porque el 202 llega antes de que se guarde. Releer en ese momento podría mostrar el voto anterior, y preguntar hasta que aparezca sumaría pedidos por cada voto. Por eso el `frontend` no relee: muestra lo que aceptó el `backend` como "Enviada", en memoria, hasta que una lectura traiga la reseña con fecha igual o posterior a `votedAt`.
+
+En la ficha, "Tu voto" vota en nombre del usuario elegido en el encabezado (sección "Usuarios"):
+
+- **Sin usuario,** invita a elegir uno y abre el selector.
+- **Voto anterior:** la reseña propia se reconoce por `userId` y se marca "(vos)". El formulario se precarga con ella (o con la enviada, si todavía no se leyó) y el botón dice "Actualizar voto". Cambiar de usuario no vuelve a leer las reseñas.
+- **Mientras el estado no es `ready`,** el formulario se ve deshabilitado, con el motivo (limpieza, recomendaciones o estado desconocido), y se habilita solo al llegar a `ready`.
+- **Estrellas:** cinco radios, que funcionan con el teclado (flechas) y con lectores de pantalla. El comentario tiene el mismo tope que el `backend`, 5.000 caracteres.
+- **Ante un error,** lo escrito se conserva. Con 503 o sin respuesta (8 s), el botón ofrece reintentar.
+- **Límite:** "Enviada" sobrevive a navegar dentro de la app, pero no a recargar. Si se recarga antes de que se guarde (con el `ingest-consumer` detenido, por ejemplo), se ve el voto anterior hasta que se guarda. El voto no se pierde.
+
+Las decisiones del `frontend` y las pruebas con el navegador están en [docs/frontend-votos.md](docs/frontend-votos.md).
 
 `POST /movies/{id}/reviews` (en el `frontend`, `/api/movies/{id}/reviews`), con `{"userId", "rating", "comment"}` (`comment` es opcional):
 
@@ -310,10 +323,6 @@ Decisiones abiertas:
 
 - **LLM:** se asume API externa con API key, a confirmar con la cátedra. Si pasa a ser un modelo local, se agrega un contenedor `ollama` y se elimina `egress-net`.
 - **API key del LLM para la evaluación:** cómo la obtiene la cátedra (key propia, una key del grupo con límite de gasto, o modelo local).
-
-Para el `frontend`:
-
-- **Selector de usuario y formulario de voto.** Las API están (secciones "Usuarios" y "Voto con reseña"). Los nombres se repiten: para reconocer la reseña propia, `GET /movies/{id}/reviews` tiene que devolver también `userId`.
 
 Secciones a completar con la implementación:
 

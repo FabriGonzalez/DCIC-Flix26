@@ -279,3 +279,248 @@ a.movie:focus-visible h2 {
   color: var(--down);
   letter-spacing: 0.05em;
 }
+
+/* Encabezado: título a la izquierda, usuario a la derecha. */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.user-button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sin padding propio: así un clic en el <dialog> mismo es un clic en el fondo (UserPicker). */
+.user-dialog {
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 4rem);
+  padding: 0;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+.user-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+/* Columna con la altura del diálogo: el título y la búsqueda quedan fijos y se desplaza la lista. */
+.user-dialog-body {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 4rem);
+  box-sizing: border-box;
+  padding: 1.1rem 1.25rem 1.25rem;
+}
+
+.user-results {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.user-dialog-body header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.user-dialog-body h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.user-dialog-body > p {
+  margin: 0.5rem 0 0.9rem;
+  font-size: 0.9rem;
+}
+
+.user-dialog .search {
+  max-width: none;
+}
+
+.user-list {
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0 0.25rem 0 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.user-list button {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+  text-align: left;
+}
+
+.user-list button:hover,
+.user-list button:focus-visible {
+  border-color: var(--accent);
+}
+
+/* El usuario actual: sombra y no un borde más grueso, que correría el texto. */
+.user-list button[aria-current="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tag {
+  font-size: 0.75rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--down);
+  color: var(--down);
+}
+
+/* Resultados de la búsqueda anterior, mientras llega la nueva. */
+.stale {
+  opacity: 0.55;
+}
+
+/* Oculto a la vista, pero lo lee un lector de pantalla. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.vote-section {
+  margin-top: 2.5rem;
+}
+
+.vote-section h3 {
+  margin: 0 0 0.5rem;
+}
+
+.vote {
+  max-width: 36rem;
+  padding: 0.9rem 1rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+}
+
+.vote-fields {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.vote-fields:disabled {
+  opacity: 0.55;
+}
+
+.vote-blocked {
+  margin: 0 0 0.75rem;
+  padding-left: 0.6rem;
+  border-left: 0.25rem solid var(--down);
+  color: var(--muted);
+}
+
+/* Las estrellas son radios: el radio queda invisible pero enfocable, y se ve la estrella. */
+.stars-input {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  align-items: center;
+}
+
+.stars-input legend {
+  float: left;
+  margin-right: 0.6rem;
+  color: var(--muted);
+}
+
+.stars-input label {
+  position: relative;
+  cursor: pointer;
+  font-size: 1.6rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+  color: var(--border);
+}
+
+.stars-input label.on {
+  color: var(--down);
+}
+
+.stars-input input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.stars-input input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 0.2rem;
+}
+
+.stars-input:disabled label {
+  cursor: default;
+}
+
+.vote-comment {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.vote-comment textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  resize: vertical;
+}
+
+.vote-count {
+  margin: -0.4rem 0 0;
+  font-size: 0.85rem;
+}
+
+.vote-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.vote-outcome {
+  margin: 0.75rem 0 0;
+  padding-left: 0.6rem;
+  border-left: 0.25rem solid var(--accent);
+}
+
+.vote-outcome.error {
+  border-left-color: var(--error);
+}
+
+/* La reseña del usuario elegido. */
+.review.own {
+  border-color: var(--accent);
+}
+
+.vote-note {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}

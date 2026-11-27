@@ -3,34 +3,37 @@ import { Link, Route, Routes } from "react-router";
 import { Catalog } from "./Catalog";
 import { MovieDetailPage } from "./MovieDetail";
 import { NotFound } from "./NotFound";
-import { StatusContext, useStatusPolling, useSystemStatus, type SystemState } from "./status";
+import { PendingVotesProvider } from "./pending";
+import { StatusProvider, useSystemStatus, type SystemState } from "./status";
+import { UserProvider } from "./user";
+import { UserPicker } from "./UserPicker";
 
 export function App() {
   return (
-    <StatusContext.Provider value={useStatusPolling()}>
-      <Layout />
-    </StatusContext.Provider>
-  );
-}
-
-function Layout() {
-  return (
-    <main className="page">
-      <header>
-        <h1>
-          <Link className="home" to="/">
-            DCIC-Flix
-          </Link>
-        </h1>
-      </header>
-      {/* Fuera de Routes: el aviso se ve en todas las pantallas y no se reinicia al navegar. */}
-      <StatusBanner />
-      <Routes>
-        <Route path="/" element={<Catalog />} />
-        <Route path="/movies/:id" element={<MovieDetailPage />} />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </main>
+    // Arriba de todo: el estado y el usuario los leen el aviso, el encabezado y cada pantalla.
+    <StatusProvider>
+      <UserProvider>
+        <PendingVotesProvider>
+          <main className="page">
+            <header className="top">
+              <h1>
+                <Link className="home" to="/">
+                  DCIC-Flix
+                </Link>
+              </h1>
+              <UserPicker />
+            </header>
+            {/* Fuera de Routes: el aviso se ve en todas las pantallas y no se reinicia al navegar. */}
+            <StatusBanner />
+            <Routes>
+              <Route path="/" element={<Catalog />} />
+              <Route path="/movies/:id" element={<MovieDetailPage />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </main>
+        </PendingVotesProvider>
+      </UserProvider>
+    </StatusProvider>
   );
 }
 

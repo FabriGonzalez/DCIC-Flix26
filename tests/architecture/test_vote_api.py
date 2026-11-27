@@ -38,9 +38,9 @@ def wait_until_saved(voter: votes.Voter, rating: int) -> None:
 
 
 def own_reviews(voter: votes.Voter) -> list[dict]:
-    """Las reseñas del votante en la ficha: el nombre es solo suyo."""
+    """Las reseñas del votante en la ficha, por id: los nombres se repiten."""
     body = compose.get_from_frontend(f"/api/movies/{voter.movie_id}/reviews")[2]
-    return [r for r in json.loads(body)["items"] if r["userName"] == voter.NAME]
+    return [r for r in json.loads(body)["items"] if r["userId"] == voter.user_id]
 
 
 def test_un_voto_llega_a_la_ficha_con_el_nombre(voter):
@@ -49,7 +49,7 @@ def test_un_voto_llega_a_la_ficha_con_el_nombre(voter):
     wait_until_saved(voter, 4)
     assert voter.added_to_count() == 1
     [review] = own_reviews(voter)
-    assert (review["rating"], review["comment"]) == (4, "Muy buena")
+    assert (review["userName"], review["rating"], review["comment"]) == (voter.NAME, 4, "Muy buena")
 
 
 def test_cambiar_el_voto_deja_uno_solo(voter):

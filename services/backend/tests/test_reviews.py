@@ -34,6 +34,7 @@ def review(**changes) -> dict:
 def test_clean_review_passes_without_email():
     assert reviews.to_review(CLEAN) == {
         "id": str(ID),
+        "userId": "usr_0937",
         "userName": "Leo Roberts",
         "rating": 4,
         "comment": "A very compelling watch.",
@@ -73,6 +74,17 @@ def test_raw_date_without_precision_is_day():
     raw = {**CLEAN}
     del raw["datePrecision"], raw["commentHidden"], raw["deleted"]
     assert reviews.to_review(raw)["datePrecision"] == "day"
+
+
+@pytest.mark.parametrize("user_id", ["usr_0000", "", "  ", None, 937])  # B4 y crudo inválido
+def test_anonymous_or_invalid_user_id_is_null(user_id):
+    assert review(user_id=user_id)["userId"] is None
+
+
+def test_missing_user_id_is_null():
+    raw = {**CLEAN}
+    del raw["user_id"]
+    assert reviews.to_review(raw)["userId"] is None
 
 
 def test_blank_name_and_comment_are_null():
